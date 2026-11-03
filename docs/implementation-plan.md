@@ -1,0 +1,83 @@
+# Implementation handoff
+
+Status: pinned development tools, SQLite startup checks, and a multi-window Electron diagnostic shell now exist. M1-02 is verification-pending because the current desktop denies focus transfer to an existing reader. See [development setup](development.md) for evidence. M1-03 initial PDF/EPUB rendering is verified with known fixtures. M1-04 reader interactions and explicit snapshot restoration are verified. M1-05 adversarial isolation is verified for the diagnostic content/resource boundary. M1-06 packaged-runtime SQLite persistence/schema handling is verified. Centrally coordinated autosave, catalog-backed session checks, measured resource budgets, and the remaining milestones are pending.
+
+Read [AGENTS.md](../AGENTS.md), [spec.md](spec.md), [architecture.md](architecture.md), and [ADR 0001](adr/0001-desktop-stack.md). Product choices are settled. Routine defaults in the spec were explicitly delegated to the agent; they are usable defaults, not questions that require another interview.
+
+## Current task
+
+- **M1-06 — packaged-runtime SQLite gate: done (diagnostic schema).** The minimal local artifact bundles pinned Electron and reader assets, runs after relocation without a development server, and ignores development-server overrides. Built-in `node:sqlite` persists a known Unicode marker/count across real process restarts. Future/damaged schemas fail startup while preserving database bytes. `mise run check` passes with 44 unit cases; three packaged cases pass; serial full smoke has 23 passing cases and the unchanged M1-02 focus failure. Direct code/test/requirements review found no unresolved in-scope defect. See [M1-06 evidence](development.md#packaged-runtime-sqlite-gate-m1-06). The separate diagnostic database does not implement catalog migrations, library-root locking or progress saves.
+
+- **M1-05 — adversarial reader/resource isolation: done (diagnostic boundary).** Canonical resource paths, assigned frame navigation, script/connection-hint stripping, and both permission handlers are enforced. Five native cases cover malicious EPUB, real network/resource denial, symlinks/traversal, absent book bridges and ignored forged/replayed progress attempts, with local images/fonts preserved. Search uses the sanitized chapter structure; repagination retains active search selection until dismissed. `mise run check` passes with 39 unit cases; full smoke has 23 passing cases and the unchanged M1-02 focus failure. See [M1-05 evidence](development.md#adversarial-readerresource-isolation-m1-05). This does not implement production progress saves or prove catalog-backed generation/sequence rejection; those checks are mandatory when that endpoint is introduced in milestones 2/5.
+
+- **M1-04 — reader interaction and locator spike: done (engine gate).** Navigation/search/sizing and format-specific snapshot capture/restore are implemented. Seven native interaction cases verify known PDF pages, EPUB chapter/percentage navigation, search/highlighting, fit/zoom/pan, and known visible passages after repagination and real process restarts. `mise run check` passes with 36 unit cases; full smoke has 18 passing cases and the unchanged M1-02 focus failure. See [M1-04 evidence](development.md#reader-interaction-and-locator-spike-m1-04). Explicit diagnostic export/restore proves the engine gate; production centrally coordinated autosave remains downstream of M1-05 isolation and catalog/session storage.
+
+- **M1-03 — format adapters and known fixtures: done.** Offline PDF.js and pinned foliate-js render created PDF, image-only PDF, reflowable, fixed-layout and obfuscated-font EPUB fixtures behind initial open/dispose adapters. Six native cases verify known text/images/font loading, cross-origin bridge separation, and corrupt-PDF failure containment. See [M1-03 evidence](development.md#format-adapter-spike-m1-03). Navigation and explicit snapshot restoration are now verified by M1-04; the diagnostic adversarial boundary is now verified by M1-05.
+
+- **M1-02 — multi-window desktop shell: verification-pending.** Implemented one library shell, one reader shell per diagnostic book (including concurrent opens), library close/reopen, last-window exit, explicit Quit, second-launch routing, and validated window/frame/role IPC. Failed window loads release their reservation for retry. Diagnostic IDs stand in for the future catalog; initial rendering/interactions are now verified by M1-03/04. Progress persistence, the library-root lock, and full A5/A14 remain later work.
+- Evidence (2026-11-03): `mise run check` passes (TypeScript, Biome, 13 unit cases, production build). `mise run smoke`: five native cases pass; the existing-reader focus case fails. Direct requirements/code/test review found no other unresolved in-scope defect. Reader shells retain sandbox/context isolation and deny Node access.
+- Remaining gate: Hyprland has `misc:focus_on_activate = false`. Initial windows gain focus, but existing-reader `BrowserWindow.focus()` requests are denied; reproduces with the default backend and explicit XWayland. Desktop policy was not changed, and the assertion remains enabled. Next action: validate a scoped compositor activation allowance or another supported focus mechanism, then rerun the native focus test and full smoke suite. See [focus evidence](development.md#multi-window-spike-m1-02).
+- **Next ready: M1-07 — packaged runtime/resource measurements**, milestone-one item 7: measure cold launch, representative reader open/search, memory and disposal on the actual Arch session using the minimal artifact. Record hardware/session and derive numeric budgets from evidence. Catalog-search/500-entry measurements still require the milestone-two catalog and remain mandatory; diagnostic fixtures cannot establish A13. Keep the full delivery workflow downstream. M1-02's focus gate still blocks milestone-one completion.
+
+## Milestone 1 — validate the risky integrations
+
+Continue here rather than generating the whole application. Development setup completed the toolchain and SQLite baseline; M1-02 implements the window shell with an outstanding focus gate. Reader interaction/locator checks use explicit diagnostic snapshots; the diagnostic adversarial boundary and packaged-runtime SQLite gate are verified; measurements below are not yet complete:
+
+1. Inspect the actual Arch runtime/display/scaling and existing project instructions. Select compatible supported Node, pnpm, Electron, TypeScript, React, and build/test versions; pin runtime/tool versions through mise and package versions/lockfile. Record Electron's embedded Node separately from development Node.
+2. **M1-02 (verification-pending):** Establish a minimal TypeScript/React Electron shell with a library window and two independent reader windows. Prefer Vite for renderer assets and straightforward desktop/preload compilation; verify packaging/module-format/CSP compatibility rather than copying an unreviewed starter wholesale. Bundle runtime assets; development servers must not become production requirements. [Vite guide](https://vite.dev/guide/)
+3. **M1-03 (done, initial rendering only):** Integrate PDF.js and a reviewed pinned foliate-js commit behind format adapters. Respect its license and record the commit/update method. Use small, known PDF, scanned PDF, reflowable EPUB, fixed-layout/image-rich EPUB, and ordinary obfuscated-font EPUB samples as applicable.
+4. **M1-04 (done, engine snapshot gate; production autosave remains milestones 2/5):** Demonstrate single-page images/text, arrow navigation, in-book search, PDF jump, EPUB percentage/chapter navigation, fit/zoom/pan, and content-location restoration after font/window changes and restart. Do not use screenshot similarity alone as the saved-location oracle: include known text markers and actual visible content.
+5. **M1-05 (done, diagnostic boundary; catalog-backed stale writes remain milestones 2/5):** Prove the book-content isolation/resource-serving model before extending the privileged bridge. Test scripted EPUB, remote image/font requests, traversal attempts, unsolicited navigation/windows, and forged/stale progress. Required local assets must still render. No unsafe flags as a workaround.
+6. **M1-06 (done, diagnostic schema):** Determine SQLite binding against the chosen Electron runtime. Prefer a suitable built-in API if actually available and adequate; otherwise select a supported driver and verify its native rebuild/packaging. Demonstrate a persistent round trip and schema-version handling in the packaged runtime, not just development Node.
+7. **M1-07 (ready for diagnostic measurements):** Verify offline packaged startup and two readers on the actual Arch setup. Record hardware/session, cold launch, catalog search, representative open/search times, memory, and disposal behavior. Use this evidence to set numeric performance/resource budgets without inventing limits on stored/active books.
+
+Deliver a short spike report with exact pins, fixture provenance, checks/outcomes, measured limitations, and selected SQLite binding. It may live in `docs/spike-results.md` once evidence exists; do not precreate a report claiming success.
+
+Go/no-go: no unresolved blocker in offline rendering, single-page EPUB behavior, exact/approximate resume handling, content isolation, SQLite packaging, or basic two-window lifecycle. If an engine/framework assumption fails, reproduce it, document alternatives and effects, and revise only that choice. Proceed autonomously on technical fixes within the accepted scope; ask about a product trade-off only if it changes agreed behavior. Relevant acceptance: A5–A7, A13–A14.
+
+## Milestone 2 — durable catalog and recovery
+
+Implement the storage/service contracts with real temporary SQLite databases/filesystems in tests: book/revision identity, metadata override provenance, sections/memberships, reading/archive state, positions/settings, root-relative paths, migrations, and recovery records. Before exposing a privileged progress endpoint, verify real sender/book/revision/session-generation ownership and monotonic sequence rejection with actual committed storage; the M1-05 ignored-message checks do not establish that contract.
+
+Implement staged immutable file publication and reconciliation before a production replacement/delete UI. Use failure injection around copy, validation, publication, transaction commit, purge, and migration. Verify old working data survives failures and uncertain leftovers are retained. A SQLite rollback alone is not evidence of filesystem safety. Relevant acceptance: A2–A4, A9–A12.
+
+## Milestone 3 — visual prototypes and library workflow
+
+Produce small visual prototypes later, as discussed with the user, to refine the accepted sidebar/grid/list layout and reader controls. Use actual representative titles/covers, empty states, missing covers, nested sections, search, Archive, and Trash. Compare concrete typography/density/focus/contrast rather than expanding product scope. Record resulting visual choices. Until feedback settles appearance, keep styling provisional and continue independent functional work.
+
+Implement library browsing, metadata/cover correction, author/subject search, sections, and status/archive actions against the real catalog. Ensure keyboard focus and selected-view search behavior are apparent. Relevant acceptance: A2–A4 plus visual/manual QA.
+
+## Milestone 4 — import, replacement, and Trash
+
+Complete recursive local import, source preservation, metadata fallbacks, independent batch failures/cancellation, hash/metadata duplicate flows, explicit replacement, open-reader coordination, delete/restore, and confirmed purge. Show recoverable old locations and precise errors; do not silently overwrite or merge. Relevant acceptance: A1, A8–A12.
+
+## Milestone 5 — integrated reader completion
+
+Complete visible/keyboard controls, incremental search, location fallback notices, autosave errors, per-book sizing, one-reader-per-book behavior, library reopening, and explicit Quit. Reuse proven adapters from the spike; keep book data away from host privileges. Test against a varied licensed/created corpus, including embedded images, outlines, large text, and resize/zoom cases. Relevant acceptance: A5–A7, A9, A14.
+
+## Milestone 6 — personal Arch delivery
+
+Provide a reproducible local packaged application directory, launcher/script, and desktop entry without a runtime development server. Document build/start, library-root configuration, manual closed-folder backup/restore, Trash storage, unsupported documents, and verified display/runtime prerequisites. No public-release/AUR/cloud work is required.
+
+Run all applicable checks and acceptance scenarios, including restoring a copied library independently and exercising the representative 500-entry catalog. Report actual timings/resource use and any unresolved rendering exceptions. Review implementation and test quality against the spec, fix concrete defects, and distinguish proven behavior from remaining limitations. A usable personal version requires the whole agreed baseline; milestones are implementation order, not permission to silently omit features.
+
+## Verification/tooling defaults
+
+- Use pnpm and mise; do not install global project dependencies. Build/install may acquire dependencies; installed application use must work offline.
+- Prefer Vitest for focused TypeScript behavior tests and real storage integration tests. Use actual known outcomes and small fixtures; do not copy the implementation's algorithm into an oracle. [Vitest guide](https://vitest.dev/guide/)
+- Prefer Playwright for actual Electron smoke flows. Its Electron automation is documented as experimental: confirm compatibility in the spike and record a manual native-app fallback for any unsupported checks. A browser-only demo cannot prove Electron window/persistence/isolation behavior. [Playwright Electron API](https://playwright.dev/docs/api/class-electron)
+- Test nondeterministic failures at narrow boundaries; do not mock every service and then claim storage safety. Use actual adapters for rendering/progress checks. Add overlapping tests only for distinct failure modes.
+- The runnable scripts are documented in [development setup](development.md): `dev`, `typecheck`, `lint` (including format checks), `format`, `test`, `test:e2e`, `build`, and aggregate `check`. Extend this tooling when actual implementation needs justify it.
+- Commit `pnpm-lock.yaml`; clean installs use `pnpm install --frozen-lockfile`. Enforce minimum release age and named lifecycle-script allowances from AGENTS.md. Check clean packaged execution, not only a hot-reload session.
+
+## Open engineering checks, ownership, and next steps
+
+| Check | Owner and next step | Blocks |
+| --- | --- | --- |
+| Production catalog durability/migrations | Implementation agent, milestone two; binding selected and packaged round trip verified by M1-06 | Production catalog integration |
+| foliate-js pagination/resume/search/font/CSP behavior | Implementation agent, representative reader/security spike | Full reader integration |
+| Actual Arch graphics/scaling and resource budgets | Implementation agent, measured local packaged run | Declaring personal release ready |
+| Final visual appearance | Later prototypes with user feedback; functional layout is already accepted | Final visual polish, not independent backend work |
+| Third-party provenance and distribution notices | Implementation agent checks actual pinned/copied assets before packaging; do not copy Calibre code merely because it was permitted | Shipping artifacts containing those dependencies/assets |
+
+No product question is waiting for an answer. The working product name is nonblocking. If local GUI/sample access prevents a check, report that specific gap and leave it unverified rather than claiming a pass.

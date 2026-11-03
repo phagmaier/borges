@@ -1,0 +1,13 @@
+packages:
+  - .
+
+saveExact: true
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+strictDepBuilds: true
+
+# pnpm 12 successor to onlyBuiltDependencies. Unknown builds fail closed.
+allowBuilds:
+  electron: true
+

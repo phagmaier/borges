@@ -1,0 +1,24 @@
+[tools]
+node = "26.13.0"
+pnpm = "12.16.1"
+
+[tasks.setup]
+description = "Initialize pinned reader source and install locked dependencies"
+run = ["git submodule update --init --recursive", "pnpm install --frozen-lockfile", "pnpm exec install-electron --no"]
+
+[tasks.dev]
+description = "Run the Electron development shell with hot reload"
+run = "pnpm dev"
+
+[tasks.check]
+description = "Typecheck, lint, test, and build"
+run = "pnpm check"
+
+[tasks.smoke]
+description = "Build and run actual Electron smoke tests (display required)"
+run = "pnpm test:e2e"
+
+[tasks.smoke-packaged]
+description = "Bundle Electron and verify relocated runtime SQLite (display required)"
+run = "pnpm test:packaged"
+

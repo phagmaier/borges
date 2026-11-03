@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src blob: data:; font-src 'self' blob:; connect-src 'self' blob:; worker-src 'self' blob:; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'"/><title>Book content</title></head>
+<body>
+<p role="status">Opening…</p><p role="alert" hidden></p>
+<nav aria-label="Reader controls" inert>
+<button id="previous" type="button">Previous</button><button id="next" type="button">Next</button>
+<button id="search-toggle" type="button">Search</button>
+<form id="jump-form"><label>Jump <input name="jump" aria-label="Jump" size="6"/></label><button id="jump-go" type="button">Go</button></form>
+<label>Contents <select id="contents" aria-label="Contents"><option value="">Choose…</option></select></label>
+<label id="font-control">Font size <input id="font" aria-label="Font size" type="number" min="8" max="72" value="18"/></label>
+<label id="zoom-control">Zoom <input id="zoom" aria-label="Zoom" type="number" min="0.25" max="8" step="0.25" value="1"/></label><button id="fit" type="button">Fit page</button>
+</nav>
+<section id="search-panel" aria-label="Book search" hidden><label>Search text <input id="query" aria-label="Search text" type="search"/></label><button id="search-close" type="button">Close search</button><p id="search-status" aria-live="polite"></p><ol id="results"></ol></section>
+<p id="location" aria-live="polite"></p><p id="visible-text" class="sr-only" data-testid="visible-text"></p>
+<!-- biome-ignore lint/a11y/noNoninteractiveTabindex: Reading surface owns the specified keyboard shortcuts. -->
+<section id="surface" aria-label="Reading surface" tabindex="0"></section>
+<details><summary>Diagnostic location snapshot</summary><p>Export/restore this fixture's location and sizing to verify the reader engine. Automatic library saves are pending.</p><button id="capture" type="button">Capture snapshot</button><label>Snapshot <textarea id="snapshot" aria-label="Snapshot"></textarea></label><button id="restore" type="button">Restore snapshot</button></details>
+<script type="module" src="/src/content.ts"></script></body>
+</html>

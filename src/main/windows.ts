@@ -1,0 +1,123 @@
+import { BrowserWindow, type IpcMainInvokeEvent } from "electron";
+import { type DevelopmentWindow, developmentBooks } from "../shared/windows";
+
+interface WindowEntry {
+  window: BrowserWindow;
+  identity: DevelopmentWindow;
+  ready: Promise<void>;
+}
+
+// Own identity and pending opens before loading starts, so concurrent requests
+// cannot create duplicate windows. No book bytes or progress live here yet.
+export class WindowCoordinator {
+  private readonly entries = new Map<string, WindowEntry>();
+  private quitting = false;
+
+  constructor(
+    private readonly shellUrl: string,
+    private readonly preloadPath: string,
+  ) {}
+
+  beginQuit(): void {
+    this.quitting = true;
+  }
+
+  identityFor(event: IpcMainInvokeEvent): DevelopmentWindow {
+    const entry = [...this.entries.values()].find(
+      ({ window }) => window.webContents === event.sender,
+    );
+    if (
+      this.quitting ||
+      !entry ||
+      event.senderFrame !== event.sender.mainFrame ||
+      !this.isShellUrl(event.senderFrame.url)
+    ) {
+      throw new Error("This request requires a registered application window.");
+    }
+    return entry.identity;
+  }
+
+  async openLibrary(): Promise<void> {
+    await this.open("library", { kind: "library" });
+  }
+
+  async openReader(bookId: unknown): Promise<void> {
+    const book = developmentBooks.find((candidate) => candidate.id === bookId);
+    if (!book) throw new Error("Unknown diagnostic book.");
+    await this.open(`reader:${book.id}`, { kind: "reader", book });
+  }
+
+  private isShellUrl(destination: string): boolean {
+    try {
+      const target = new URL(destination);
+      const shell = new URL(this.shellUrl);
+      target.hash = "";
+      shell.hash = "";
+      return target.href === shell.href;
+    } catch {
+      return false;
+    }
+  }
+
+  private async open(key: string, identity: DevelopmentWindow): Promise<void> {
+    if (this.quitting) throw new Error("The application is quitting.");
+    let entry = this.entries.get(key);
+    if (!entry) {
+      const window = new BrowserWindow({
+        title:
+          identity.kind === "library"
+            ? "Borges — development"
+            : `${identity.book.title} — reader shell`,
+        width: 1000,
+        height: 720,
+        show: false,
+        webPreferences: {
+          preload: this.preloadPath,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      });
+      entry = { window, identity, ready: Promise.resolve() };
+      this.entries.set(key, entry);
+      window.removeMenu();
+      window.on("page-title-updated", (event) => event.preventDefault());
+      window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      window.webContents.on("will-frame-navigate", (event) => {
+        // Only the registered shell may load its assigned engine. Only that
+        // engine may create chapter frames. Book documents cannot navigate
+        // themselves, their ancestors, or siblings into another origin/role.
+        const engineUrl =
+          identity.kind === "reader"
+            ? `borges://reader/content.html?book=${identity.book.id}`
+            : null;
+        const initiator = event.initiator;
+        const allowed = event.isMainFrame
+          ? this.isShellUrl(event.url) &&
+            (!initiator || initiator === window.webContents.mainFrame)
+          : engineUrl !== null &&
+            ((event.url === engineUrl &&
+              event.frame?.parent === window.webContents.mainFrame &&
+              (!initiator ||
+                initiator === window.webContents.mainFrame ||
+                initiator.url === engineUrl)) ||
+              (event.url.startsWith("blob:borges://reader/") &&
+                event.frame?.parent?.url === engineUrl &&
+                initiator?.url === engineUrl));
+        if (!allowed) event.preventDefault();
+      });
+      window.on("closed", () => {
+        if (this.entries.get(key)?.window === window) this.entries.delete(key);
+      });
+      entry.ready = window.loadURL(this.shellUrl).catch((error: unknown) => {
+        if (!window.isDestroyed()) window.destroy();
+        throw error;
+      });
+    }
+    await entry.ready;
+    if (entry.window.isDestroyed() || this.quitting) return;
+    if (entry.window.isMinimized()) entry.window.restore();
+    entry.window.show();
+    entry.window.focus();
+  }
+}

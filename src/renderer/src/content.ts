@@ -1,0 +1,322 @@
+import { EpubSession } from "../../readers/epub";
+import { PdfSession } from "../../readers/pdf";
+import {
+  parseSnapshot,
+  type ReaderSession,
+  type SearchHit,
+} from "../../readers/session";
+import "pdfjs-dist/web/pdf_viewer.css";
+import "./content.css";
+
+const fixtures = new Map([
+  ["sample-pdf", "known.pdf"],
+  ["image-pdf", "image-only.pdf"],
+  ["sample-epub", "reflowable.epub"],
+  ["fixed-epub", "fixed.epub"],
+  ["font-epub", "obfuscated.epub"],
+]);
+function element<T extends HTMLElement>(selector: string): T {
+  const found = document.querySelector<T>(selector);
+  if (!found) throw new Error(`Missing reader control: ${selector}`);
+  return found;
+}
+const surface = element<HTMLDivElement>("#surface");
+const status = element<HTMLParagraphElement>('[role="status"]');
+const alert = element<HTMLParagraphElement>('[role="alert"]');
+const query = element<HTMLInputElement>("#query");
+const panel = element<HTMLElement>("#search-panel");
+const results = element<HTMLOListElement>("#results");
+const searchStatus = element<HTMLElement>("#search-status");
+const jump = element<HTMLFormElement>("#jump-form");
+const font = element<HTMLInputElement>("#font");
+const zoom = element<HTMLInputElement>("#zoom");
+const snapshot = element<HTMLTextAreaElement>("#snapshot");
+let session: ReaderSession;
+let revision = "";
+let disposed = false;
+let commands = Promise.resolve();
+let search: AbortController | undefined;
+let hits: SearchHit[] = [];
+let selected = -1;
+let queryVersion = 0;
+function report(reason: unknown) {
+  alert.hidden = false;
+  alert.textContent = String(reason);
+}
+function run(action: () => Promise<void>, clearError = true) {
+  commands = commands
+    .then(async () => {
+      if (disposed) return;
+      if (clearError) alert.hidden = true;
+      await action();
+    })
+    .catch(report);
+  return commands;
+}
+function closeSearch() {
+  search?.abort();
+  hits = [];
+  results.replaceChildren();
+  panel.hidden = true;
+  session.clearSearch();
+  surface.focus();
+}
+function showSearch() {
+  panel.hidden = false;
+  query.focus();
+}
+function handleKey(event: KeyboardEvent) {
+  const target = event.target as Element | null;
+  if (
+    target?.closest(
+      "input,textarea,select,button,a,[contenteditable],dialog",
+    ) ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey
+  )
+    return;
+  const action =
+    event.key === "ArrowRight" || event.key === "ArrowDown"
+      ? 1
+      : event.key === "ArrowLeft" || event.key === "ArrowUp"
+        ? -1
+        : 0;
+  if (action) {
+    event.preventDefault();
+    void run(() => session.turn(action));
+  } else if (event.key === "/") {
+    event.preventDefault();
+    showSearch();
+  } else if (event.key === ":") {
+    event.preventDefault();
+    element<HTMLInputElement>('input[name="jump"]').focus();
+  }
+}
+surface.addEventListener("keydown", handleKey);
+async function searchBook() {
+  search?.abort();
+  session.clearSearch();
+  const version = ++queryVersion;
+  const current = new AbortController();
+  search = current;
+  hits = [];
+  selected = -1;
+  results.replaceChildren();
+  const text = query.value.trim();
+  if (!text) {
+    searchStatus.textContent = "Enter search text.";
+    return;
+  }
+  let hasText = false;
+  searchStatus.textContent = "Searching…";
+  try {
+    for await (const batch of session.search(text, current.signal)) {
+      if (current.signal.aborted) return;
+      hasText ||= batch.hasText;
+      for (const hit of batch.hits) {
+        const index = hits.length;
+        hits.push(hit);
+        const li = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = `${hit.label}: ${hit.excerpt}`;
+        button.onclick = () => {
+          selected = index;
+          void run(async () => {
+            if (version === queryVersion) {
+              await session.showHit(hit);
+              if (panel.hidden || version !== queryVersion)
+                session.clearSearch();
+            }
+          });
+        };
+        li.append(button);
+        results.append(li);
+      }
+      searchStatus.textContent = `Searching… ${hits.length} matches`;
+    }
+    if (!current.signal.aborted)
+      searchStatus.textContent = hits.length
+        ? `${hits.length} matches`
+        : hasText
+          ? "No matches"
+          : "Text unavailable in this book";
+  } catch (reason) {
+    if (!current.signal.aborted) report(reason);
+  }
+}
+query.addEventListener("input", () => {
+  void searchBook();
+});
+query.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSearch();
+  }
+  if (event.key === "Enter" && hits.length) {
+    event.preventDefault();
+    selected =
+      selected < 0
+        ? event.shiftKey
+          ? hits.length - 1
+          : 0
+        : (selected + (event.shiftKey ? -1 : 1) + hits.length) % hits.length;
+    const hit = hits[selected];
+    if (hit) {
+      const version = queryVersion;
+      void run(async () => {
+        if (version === queryVersion) {
+          await session.showHit(hit);
+          if (panel.hidden || version !== queryVersion) session.clearSearch();
+        }
+      });
+    }
+  }
+});
+panel.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSearch();
+  }
+});
+element("#search-toggle").onclick = showSearch;
+element("#search-close").onclick = closeSearch;
+element("#previous").onclick = () => {
+  void run(() => session.turn(-1));
+};
+element("#next").onclick = () => {
+  void run(() => session.turn(1));
+};
+function jumpToInput() {
+  const value = element<HTMLInputElement>('input[name="jump"]').value;
+  void run(async () => {
+    await session.jump(value);
+    surface.focus();
+  });
+}
+jump.addEventListener("submit", (event) => event.preventDefault());
+element<HTMLInputElement>('input[name="jump"]').addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      jumpToInput();
+    }
+  },
+);
+element("#jump-go").onclick = jumpToInput;
+const contents = element<HTMLSelectElement>("#contents");
+contents.onchange = () => {
+  if (!contents.value) return;
+  const target = session.contents[Number(contents.value)]?.target;
+  if (target)
+    void run(async () => {
+      await session.restore(target);
+      surface.focus();
+    });
+};
+async function size() {
+  const fontSize = Number(font.value);
+  const value = Number(zoom.value);
+  if (
+    !Number.isFinite(fontSize) ||
+    fontSize < 8 ||
+    fontSize > 72 ||
+    !Number.isFinite(value) ||
+    value < 0.25 ||
+    value > 8
+  )
+    throw new Error("Font size must be 8–72; zoom must be 0.25–8.");
+  await session.setSizing({ fontSize, zoom: value });
+}
+font.onchange = zoom.onchange = () => {
+  void run(size);
+};
+element("#fit").onclick = () => {
+  zoom.value = "1";
+  void run(size);
+};
+element("#capture").onclick = () => {
+  void run(async () => {
+    snapshot.value = JSON.stringify({
+      version: 1,
+      revision,
+      location: session.capture(),
+      sizing: session.sizing,
+    });
+  });
+};
+element("#restore").onclick = () => {
+  void run(async () => {
+    const saved = parseSnapshot(snapshot.value, revision);
+    if (saved.location.format !== session.format)
+      throw new Error("Snapshot format mismatch.");
+    await session.setSizing(saved.sizing);
+    font.value = String(saved.sizing.fontSize);
+    zoom.value = String(saved.sizing.zoom);
+    const result = await session.restore(saved.location);
+    status.textContent =
+      result === "exact"
+        ? "Ready · exact restoration"
+        : result === "approximate"
+          ? "Ready · approximate restoration"
+          : "Ready · restarted at beginning";
+  });
+};
+let observer: ResizeObserver | undefined;
+async function open() {
+  const filename = fixtures.get(
+    new URL(location.href).searchParams.get("book") ?? "",
+  );
+  if (!filename) throw new Error("Unknown diagnostic fixture.");
+  const response = await fetch(`/reader-assets/fixtures/${filename}`);
+  if (!response.ok) throw new Error(`Fixture unavailable: ${response.status}`);
+  const bytes = await response.arrayBuffer();
+  revision = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  session = filename.endsWith(".pdf")
+    ? new PdfSession()
+    : new EpubSession(handleKey);
+  session.addEventListener("relocate", () => {
+    element("#location").textContent = session.label;
+    element("#visible-text").textContent = session.visibleText;
+  });
+  await session.open(new File([bytes], filename), surface);
+  element("#font-control").hidden = !session.reflowable;
+  element("#zoom-control").hidden = session.reflowable;
+  element("#fit").hidden = session.reflowable;
+  for (const [index, item] of session.contents.entries()) {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = item.label;
+    contents.append(option);
+  }
+  contents.disabled = !session.contents.length;
+  element("nav").inert = false;
+  element("#location").textContent = session.label;
+  element("#visible-text").textContent = session.visibleText;
+  status.textContent = "Ready";
+  let queued = false;
+  observer = new ResizeObserver(() => {
+    if (queued || disposed) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      void run(() => session.resize(), false);
+    });
+  });
+  observer.observe(surface);
+}
+open().catch(async (reason: unknown) => {
+  status.hidden = true;
+  report(reason);
+  await session?.dispose().catch(console.error);
+});
+window.addEventListener("pagehide", () => {
+  disposed = true;
+  search?.abort();
+  observer?.disconnect();
+  void session?.dispose().catch(console.error);
+});
