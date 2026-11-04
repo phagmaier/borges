@@ -1,12 +1,14 @@
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   type ElectronApplication,
   _electron as electron,
   expect,
   test,
 } from "@playwright/test";
+import { kill, startChild } from "../unit/library-fixtures";
 
 test("built desktop shell loads with sandboxed UI and its locked development catalog", async () => {
   const profile = await mkdtemp(join(tmpdir(), "borges-smoke-"));
@@ -40,6 +42,7 @@ test("built desktop shell loads with sandboxed UI and its locked development cat
         created: true,
         // Development builds keep the library inside their own profile.
         root: join(profile, "library"),
+        reconciliation: { rolledBack: 0, retained: 0, unrecognized: 0 },
       },
     });
     expect(diagnostics.catalog.libraryId).toMatch(/^[0-9a-f-]{36}$/);
@@ -73,6 +76,76 @@ test("built desktop shell loads with sandboxed UI and its locked development cat
       await application?.close();
     } finally {
       await rm(profile, { recursive: true, force: true });
+    }
+  }
+});
+
+test("startup rolls back an import killed mid-copy before any window opens", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "borges-reconcile-"));
+  const root = join(temporary, "library");
+  const source = join(temporary, "Interrupted.pdf");
+  const bytes = Buffer.concat([
+    Buffer.from("%PDF-1.7\n"),
+    Buffer.alloc(2 * 1024 * 1024, 0x41),
+  ]);
+  let application: ElectronApplication | undefined;
+  try {
+    await writeFile(source, bytes);
+    // A real Node process starts the import and is killed during the copy.
+    await kill(
+      await startChild(
+        "import-and-stop",
+        root,
+        "at copying",
+        source,
+        "copying",
+      ),
+    );
+    expect(await readdir(join(root, "staging"))).toHaveLength(1);
+    await writeFile(join(root, "files", "stray.pdf"), "%PDF-1.4\n");
+
+    application = await electron.launch({
+      args: ["."],
+      env: {
+        ...process.env,
+        BORGES_DEV_PROFILE: join(temporary, "profile"),
+        BORGES_LIBRARY_ROOT: root,
+      },
+    });
+    const page = await application.firstWindow();
+    const diagnostics = await page.evaluate(() =>
+      window.development.getRuntimeInfo(),
+    );
+    expect(diagnostics.catalog).toMatchObject({
+      root,
+      created: false,
+      reconciliation: { rolledBack: 1, retained: 0, unrecognized: 1 },
+    });
+    await application.close();
+    application = undefined;
+
+    expect(await readdir(join(root, "staging"))).toEqual([]);
+    // Unrecognized files are reported, never deleted.
+    expect(await readdir(join(root, "files"))).toEqual(["stray.pdf"]);
+    const catalog = new DatabaseSync(join(root, "catalog.sqlite"), {
+      readOnly: true,
+    });
+    try {
+      expect(
+        catalog
+          .prepare("SELECT state FROM recovery_operations")
+          .all()
+          .map((row) => row.state),
+      ).toEqual(["abandoned"]);
+      expect(catalog.prepare("SELECT id FROM books").all()).toEqual([]);
+    } finally {
+      catalog.close();
+    }
+  } finally {
+    try {
+      await application?.close();
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
     }
   }
 });

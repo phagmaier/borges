@@ -1,5 +1,6 @@
 // Real child process for lock and crash tests; run directly by Node.
 import { mkdirSync } from "node:fs";
+import { addFileAsNewBook, type ImportStep } from "../../src/library/import.ts";
 import {
   beginReaderSession,
   saveProgress,
@@ -8,7 +9,7 @@ import { openLibrary } from "../../src/storage/catalog.ts";
 import { acquireRootLock } from "../../src/storage/lock.ts";
 import { catalogMigrations } from "../../src/storage/schema.ts";
 
-const [mode, root] = process.argv.slice(2);
+const [mode, root, ...extra] = process.argv.slice(2);
 if (!root) throw new Error("usage: storage-child.ts <mode> <root>");
 const block = () =>
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
@@ -58,6 +59,18 @@ if (mode === "hold-lock") {
     console.log(`acked ${ack.sequence}`);
   }
   block();
+} else if (mode === "import-and-stop") {
+  // Add `source` as a new book and hang at protocol point `step`.
+  const [source, step] = extra as [string, ImportStep];
+  const library = openLibrary({ root });
+  await addFileAsNewBook(library, source, {
+    checkpoint(reached) {
+      if (reached !== step) return;
+      console.log(`at ${step}`);
+      block();
+    },
+  });
+  throw new Error(`never reached ${step}`);
 } else {
   throw new Error(`unknown mode ${mode}`);
 }

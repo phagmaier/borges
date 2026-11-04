@@ -1,6 +1,10 @@
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { app, ipcMain, net, protocol, session } from "electron";
+import {
+  type ReconciliationReport,
+  reconcileOperations,
+} from "../library/recovery";
 import type { CatalogInfo, RuntimeInfo } from "../shared/runtime";
 import { type Library, openLibrary } from "../storage/catalog";
 import { resolveLibraryRoot } from "../storage/paths";
@@ -35,7 +39,10 @@ protocol.registerSchemesAsPrivileged([
 
 let library: Library | undefined;
 
-function catalogInfo(opened: Library): CatalogInfo {
+function catalogInfo(
+  opened: Library,
+  report: ReconciliationReport | null,
+): CatalogInfo {
   const sqlite = opened.database
     .prepare("SELECT sqlite_version() AS version")
     .get()?.version;
@@ -47,6 +54,13 @@ function catalogInfo(opened: Library): CatalogInfo {
     created: opened.created,
     upgradedFrom: opened.upgrade?.from ?? null,
     recoveredStaleLockPid: opened.recoveredStaleLock?.pid ?? null,
+    reconciliation: report && {
+      rolledBack: report.operations.filter((o) => o.outcome === "rolled-back")
+        .length,
+      retained: report.operations.filter((o) => o.outcome === "retained")
+        .length,
+      unrecognized: report.unrecognized.length,
+    },
   };
 }
 
@@ -83,6 +97,34 @@ function openConfiguredLibrary(): Library {
   return opened;
 }
 
+/**
+ * Settle interrupted imports before any window can start new work. A failure
+ * here leaves the records open for the next startup; the library still opens.
+ */
+async function reconcile(
+  opened: Library,
+): Promise<ReconciliationReport | null> {
+  try {
+    const report = await reconcileOperations(opened);
+    for (const operation of report.operations) {
+      (operation.outcome === "retained" ? console.warn : console.info)(
+        operation.message,
+      );
+    }
+    if (report.unrecognized.length > 0) {
+      console.warn(
+        `Kept unrecognized managed files for inspection: ${report.unrecognized.join(", ")}`,
+      );
+    }
+    return report;
+  } catch (error) {
+    console.error(
+      `Interrupted operations could not be reconciled; they are kept for the next start (${error instanceof Error ? error.message : String(error)}).`,
+    );
+    return null;
+  }
+}
+
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => windows.beginQuit());
 // Closing the catalog checkpoints its WAL and releases the root lock.
@@ -114,7 +156,6 @@ if (!app.requestSingleInstanceLock()) {
         app.exit(1);
         return;
       }
-      const catalog = catalogInfo(library);
       if (
         developmentUrl &&
         !["localhost", "127.0.0.1", "[::1]"].includes(
@@ -151,6 +192,9 @@ if (!app.requestSingleInstanceLock()) {
           callback({ cancel: !isLocalDev });
         },
       );
+      // Content/network boundaries above are in place before the first await;
+      // windows open only after interrupted operations are settled.
+      const catalog = catalogInfo(library, await reconcile(library));
       ipcMain.handle("development:runtime", (event) => {
         windows.identityFor(event);
         return runtimeInfo(catalog);

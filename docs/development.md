@@ -260,3 +260,26 @@ Evidence:
 
 Limits: no sender binding, IPC or acknowledgement UI yet (M2-05). Status/`last_opened_at` transitions are not applied on open (M2-04). Durability was tested across process kills, not power loss.
 
+
+## Staged file publication and reconciliation (M2-03)
+
+Implemented and reviewed on 2026-11-03 without dependency or schema changes (the schema-1 `recovery_operations` table already had the needed states). `addFileAsNewBook` is internal: no IPC or UI calls it yet. See [architecture](architecture.md#filesystemdatabase-consistency) for the protocol and rollback rules.
+
+Evidence (real files, real SQLite, real processes; no filesystem mocks):
+
+- `mise run check`: 147 unit cases. `tests/unit/import.test.ts` (35 cases):
+  - sniffing of every fixture, a PDF header inside and beyond the first KiB, empty/text/truncated files, a ZIP without `container.xml` and one with a wrong `mimetype`;
+  - PDF and EPUB fixtures added with `sha256sum`-computed hashes, byte-identical published copies, unchanged source bytes/mtime, an empty `staging/`, durable Unread/unarchived/unfiled rows after reopening, and a working `beginReaderSession` grant;
+  - unsupported names, missing sources and directories rejected without a record; three content mismatches rolled back;
+  - an injected failure at each of the six protocol points rolled back with no partial or published bytes left;
+  - a rollback whose removal fails (read-only `files/`) stays open, is retried without being double-reported, and succeeds once removal works;
+  - a child process (`tests/unit/storage-child.ts import-and-stop`) `SIGKILL`ed at each protocol point: the leftover state is checked first (including a partial copy smaller than the source when killed mid-copy, and bytes already at the final path when killed between rename and its record), then reconciled to no book and no managed bytes; a second start finds nothing to do;
+  - a kill right after the catalog commit keeps the book and its bytes;
+  - a published copy altered after the kill, plus stray `staging/` and `files/` entries, retained and reported on two consecutive starts; a symlink at a staged path retained without being followed.
+- Mutations fail tests: skipping the digest comparison, ignoring the published path, skipping the content check, treating non-regular files as removable, skipping in-process rollback, and treating only failed records as known managed files.
+- `mise run smoke`: 26 native cases. The new case kills a real import mid-copy, then launches Electron on that root. Diagnostics report one rolled-back operation and one unrecognized file. After exit `staging/` is empty, the stray file is kept, the operation is abandoned and no book exists. `mise run smoke-packaged`: 6 cases. `mise run measure`: within budget.
+- Startup order: reconciliation is the first `await` in startup. It runs after the protocol, permission and network handlers are installed and before IPC handlers and the first window, so no content request is served before the offline boundary exists. An earlier draft awaited it before those handlers; that was moved defensively, not because a leak was observed.
+
+Known pre-existing flake: two isolation cases that call `net.fetch` through Playwright's `electronApplication.evaluate` occasionally fail with `TypeError: Request is not a constructor`. They failed 1 of 30 runs on the unchanged baseline and 2 of 30 with this change. A probe found `globalThis.Request` undefined in that evaluate context in some baseline launches too. Each full serial `mise run smoke` after the fix passed 26/26. This is unrelated to M2-03 and was not investigated further.
+
+Limits: no duplicate detection, metadata/cover extraction, sections, batch/folder import, cancellation, or encryption/parse validation (milestone four). The EPUB sniff tolerates a missing `mimetype` entry. Reconciliation of replace/delete/restore/purge is not implemented. Durability was tested with process kills, not power loss. Messages go to stdout/stderr only. Copying/hashing are async, but each state commit is a synchronous ~40 ms SQLite commit on the main thread (four per import).

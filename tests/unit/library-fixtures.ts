@@ -56,10 +56,11 @@ export function startChild(
   mode: string,
   root: string,
   ready: string,
+  ...extra: string[]
 ): Promise<ChildProcess> {
   const child = spawn(
     process.execPath,
-    [resolve("tests/unit/storage-child.ts"), mode, root],
+    [resolve("tests/unit/storage-child.ts"), mode, root, ...extra],
     { stdio: ["ignore", "pipe", "inherit"] },
   );
   children.push(child);

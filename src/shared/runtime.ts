@@ -9,6 +9,12 @@ export interface CatalogInfo {
   upgradedFrom: number | null;
   /** Process ID named by a stale lock record replaced at startup. */
   recoveredStaleLockPid: number | null;
+  /** Startup reconciliation of interrupted file/catalog operations. */
+  reconciliation: {
+    rolledBack: number;
+    retained: number;
+    unrecognized: number;
+  } | null;
 }
 
 export interface RuntimeInfo {
