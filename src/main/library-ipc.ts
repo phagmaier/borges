@@ -43,6 +43,7 @@ interface Dependencies {
   root: string;
   windows: WindowCoordinator;
   readers: ReaderSessions;
+  startupProblems: string[];
 }
 
 /**
@@ -56,6 +57,7 @@ export function registerLibraryIpc({
   root,
   windows,
   readers,
+  startupProblems,
 }: Dependencies): { changed(): void } {
   const changed = () => {
     const library = windows.library();
@@ -92,6 +94,7 @@ export function registerLibraryIpc({
     );
   }
   const mutates = { mutates: true };
+  handle("startup-problems", () => startupProblems);
   const fields = (input: unknown) => (input ?? {}) as Record<string, unknown>;
 
   handle("cover", (bookId, token) =>

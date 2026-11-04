@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("development", development);
 
 const borges: BorgesApi = {
   library: {
+    startupProblems: () => ipcRenderer.invoke("library:startup-problems"),
     books: (query) => ipcRenderer.invoke("library:books", query),
     filterTerms: (query) => ipcRenderer.invoke("library:filter-terms", query),
     sections: (options) => ipcRenderer.invoke("library:sections", options),

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import {
+  chmod,
   cp,
   mkdir,
   mkdtemp,
@@ -7,6 +8,7 @@ import {
   readFile,
   rename,
   rm,
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -82,22 +84,81 @@ async function catalogOf(application: ElectronApplication) {
   };
 }
 
-/** Run the packaged executable to completion, capturing its explanation. */
-async function refusedLaunch(env: NodeJS.ProcessEnv) {
-  let stderr = "";
-  const child = spawn(executablePath, [], {
+/** Refusals stay visible until closed, then exit unsuccessfully. */
+async function refusedLaunch(env: Record<string, string>, reactivate = false) {
+  const application = await electron.launch({
+    executablePath,
+    args: [],
     cwd,
     env,
-    stdio: ["ignore", "ignore", "pipe"],
   });
-  child.stderr.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
+  const child = application.process();
   try {
+    const page = await application.firstWindow();
+    await expect(
+      page.getByRole("heading", { name: "Borges cannot open its library" }),
+    ).toBeVisible();
+    const explanation = await page.locator("main").textContent();
+    await expect(page.locator("main img, main script")).toHaveCount(0);
+    expect(child.exitCode).toBeNull();
+    expect(
+      await page.evaluate(() => ({
+        bridge: typeof Reflect.get(window, "borges"),
+        development: typeof Reflect.get(window, "development"),
+        require: typeof Reflect.get(window, "require"),
+      })),
+    ).toEqual({
+      bridge: "undefined",
+      development: "undefined",
+      require: "undefined",
+    });
+    expect(
+      await application.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        if (!window) throw new Error("Missing startup window");
+        const preferences =
+          // Electron exposes this at runtime but omits it from its public types.
+          (
+            window.webContents as unknown as {
+              getLastWebPreferences(): Record<string, unknown>;
+            }
+          ).getLastWebPreferences();
+        return {
+          sandbox: preferences?.sandbox,
+          contextIsolation: preferences?.contextIsolation,
+          javascript: preferences?.javascript,
+        };
+      }),
+    ).toEqual({ sandbox: true, contextIsolation: true, javascript: false });
+    if (reactivate) {
+      await application.evaluate(({ app }) => {
+        Reflect.set(globalThis, "secondLaunch", false);
+        app.once("second-instance", () =>
+          Reflect.set(globalThis, "secondLaunch", true),
+        );
+      });
+      const second = spawn(executablePath, [], { cwd, env, stdio: "ignore" });
+      try {
+        await expect.poll(() => second.exitCode).toBe(0);
+        await expect
+          .poll(() =>
+            application.evaluate(() => Reflect.get(globalThis, "secondLaunch")),
+          )
+          .toBe(true);
+        expect(application.windows()).toHaveLength(1);
+        await expect(
+          page.getByRole("heading", { name: "Borges cannot open its library" }),
+        ).toBeVisible();
+      } finally {
+        if (second.exitCode === null) second.kill();
+      }
+    }
+    await page.screenshot({ path: "test-results/startup-refusal.png" });
+    await page.close();
     await expect.poll(() => child.exitCode, { timeout: 10_000 }).toBe(1);
-    return stderr;
+    return explanation;
   } finally {
-    if (child.exitCode === null) child.kill();
+    if (child.exitCode === null) await application.close();
   }
 }
 
@@ -226,8 +287,8 @@ test("another profile cannot share a locked root; a killed holder is recovered",
   try {
     const { library, info } = await catalogOf(holder);
     const pid = holder.process().pid;
-    const stderr = await refusedLaunch(environment(other, shared));
-    expect(stderr).toContain(
+    const explanation = await refusedLaunch(environment(other, shared), true);
+    expect(explanation).toContain(
       `The library at ${libraryFor(profile)} is in use by another Borges process (process ${pid} `,
     );
     // The holder is unaffected and still answers through its catalog.
@@ -276,20 +337,48 @@ for (const scenario of [
       ),
     error: "is a populated SQLite database without a Borges schema",
   },
+  {
+    name: "unreadable catalog",
+    prepare: (_database: DatabaseSync) => {},
+    bytes: "This is not a SQLite database",
+    error: "cannot be read",
+  },
+  {
+    name: "failed upgrade",
+    catalog: true,
+    from: 2,
+    prepare: (_database: DatabaseSync) => {},
+    readOnly: true,
+    error: "Upgrading the catalog from schema 2 to 3 failed",
+  },
 ]) {
-  test(`packaged startup refuses a ${scenario.name} and retains the catalog`, async () => {
-    const libraryRoot = libraryFor(profile);
+  test(`packaged startup refuses ${scenario.name} and retains the catalog`, async () => {
+    const libraryRoot = join(
+      libraryFor(profile),
+      "Library <img src=x onerror=alert(1)>",
+    );
     await mkdir(libraryRoot, { recursive: true });
-    if (scenario.catalog) openLibrary({ root: libraryRoot }).close();
+    if (scenario.catalog)
+      openLibrary({
+        root: libraryRoot,
+        migrations: catalogMigrations.slice(0, scenario.from ?? 3),
+      }).close();
     const path = join(libraryRoot, "catalog.sqlite");
     const database = new DatabaseSync(path);
     scenario.prepare(database);
     database.close();
+    if (scenario.bytes) await writeFile(path, scenario.bytes);
+    if (scenario.readOnly) await chmod(path, 0o444);
     const before = await readFile(path);
-    const stderr = await refusedLaunch(environment());
-    expect(stderr).toContain("Borges cannot open its library");
-    expect(stderr).toContain(scenario.error);
-    expect(stderr).toContain("It was not changed");
+    const explanation = await refusedLaunch(
+      environment(profile, { BORGES_LIBRARY_ROOT: libraryRoot }),
+    );
+    expect(explanation).toContain("Borges cannot open its library");
+    expect(explanation).toContain(scenario.error);
+    expect(explanation).toContain(libraryRoot);
+    expect(explanation).toContain(
+      scenario.readOnly ? "It remains at schema 2" : "It was not changed",
+    );
     expect(await readFile(path)).toEqual(before);
   });
 }

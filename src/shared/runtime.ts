@@ -95,6 +95,8 @@ export interface ProgressReport {
 export interface BorgesApi {
   /** Library-window requests; main refuses every other sender. */
   library: {
+    /** Unresolved recovery diagnostics from this startup, library window only. */
+    startupProblems(): Promise<LibraryResult<string[]>>;
     /** Books matching a query, All Books by default. */
     books(query?: BookQuery): Promise<LibraryResult<BookSummary[]>>;
     filterTerms(

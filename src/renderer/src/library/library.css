@@ -1,4 +1,19 @@
 /* Provisional library layout (M3-02); appearance is settled by M3-06. */
+.startup-problems {
+  border: 1px solid var(--line);
+  border-inline-start: 4px solid var(--accent);
+  padding: 16px;
+  margin-bottom: 20px;
+  overflow-wrap: anywhere;
+}
+.startup-problems h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+.startup-problems li {
+  white-space: pre-wrap;
+  margin-block: 8px;
+}
 .library {
   --line: light-dark(#c9cec4, #39433c);
   --muted: light-dark(#5b665c, #a3ada3);

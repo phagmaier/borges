@@ -11,6 +11,7 @@ import { BookResults, type Layout, RESULT_BATCH } from "./BookResults";
 import { SectionActions } from "./SectionActions";
 import { SelectionBar } from "./SelectionBar";
 import { Sidebar } from "./Sidebar";
+import { StartupProblems } from "./StartupProblems";
 import "./library.css";
 import {
   type Destination,
@@ -230,6 +231,7 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
         onSectionCreated={showSection}
       />
       <main className="library-main" aria-labelledby={`${ids}-title`}>
+        <StartupProblems root={runtime?.catalog.root} />
         <header className="toolbar">
           <h1 id={`${ids}-title`}>{title}</h1>
           {view ? (

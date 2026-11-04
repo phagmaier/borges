@@ -50,6 +50,7 @@ test("sections, memberships, status and metadata through library IPC", async ({
   });
   const changes = () =>
     library.evaluate(() => Number(Reflect.get(window, "changes")));
+  expect(await value(library, "startupProblems")).toEqual([]);
 
   // Metadata: ordered authors, subjects deduplicated ignoring case.
   expect(
@@ -215,6 +216,7 @@ test("sections, memberships, status and metadata through library IPC", async ({
   const { reader } = await openCatalogReader(application, "Known PDF");
   for (const [method, args] of [
     ["books", []],
+    ["startupProblems", []],
     ["archive", [pdf]],
     ["createSection", ["From reader", null]],
     ["startRereading", [pdf]],

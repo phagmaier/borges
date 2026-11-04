@@ -94,6 +94,10 @@ test("adversarial EPUB cannot execute scripts or navigate out of the book", asyn
 test("real protocol serving confines decoded paths and file/directory symlinks", async ({
   application,
 }) => {
+  // Launch can return before main has installed the protocol/offline handlers.
+  // Exercise that boundary only once the normal startup has completed.
+  const library = await application.firstWindow();
+  await expect(library.getByTestId("library-id")).toHaveText(/^[0-9a-f-]{36}$/);
   const temporary = await mkdtemp(join(tmpdir(), "borges-escape-"));
   const name = `isolation-${process.pid}`;
   const assets = resolve("out/renderer/assets");

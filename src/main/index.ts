@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   app,
+  type BrowserWindow,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   ipcMain,
@@ -25,6 +26,7 @@ import {
 import { resolveServedAsset } from "./assets";
 import { registerLibraryIpc } from "./library-ipc";
 import { ReaderSessions } from "./sessions";
+import { showStartupFailure } from "./startup";
 import { WindowCoordinator } from "./windows";
 
 const directory = fileURLToPath(new URL(".", import.meta.url));
@@ -56,6 +58,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let library: Library | undefined;
+let configuredLibraryRoot: string | undefined;
+let startupFailure: BrowserWindow | undefined;
 
 function catalogInfo(
   opened: Library,
@@ -101,6 +105,7 @@ function openConfiguredLibrary(): Library {
     // Unpackaged development builds never open the user's real library.
     developmentProfile: app.isPackaged ? undefined : app.getPath("userData"),
   });
+  configuredLibraryRoot = root;
   const opened = openLibrary({ root });
   if (opened.recoveredStaleLock) {
     console.warn(
@@ -121,7 +126,7 @@ function openConfiguredLibrary(): Library {
  */
 async function reconcile(
   opened: Library,
-): Promise<ReconciliationReport | null> {
+): Promise<{ report: ReconciliationReport | null; problems: string[] }> {
   try {
     const report = await reconcileOperations(opened);
     for (const operation of report.operations) {
@@ -134,12 +139,23 @@ async function reconcile(
         `Kept unrecognized managed files for inspection: ${report.unrecognized.join(", ")}`,
       );
     }
-    return report;
+    return {
+      report,
+      problems: [
+        ...report.operations
+          .filter((operation) => operation.outcome === "retained")
+          .map((operation) =>
+            [operation.message, ...operation.retained].join("\n"),
+          ),
+        ...report.unrecognized.map(
+          (path) => `Unrecognized managed file kept for inspection: ${path}`,
+        ),
+      ],
+    };
   } catch (error) {
-    console.error(
-      `Interrupted operations could not be reconciled; they are kept for the next start (${error instanceof Error ? error.message : String(error)}).`,
-    );
-    return null;
+    const message = `Interrupted operations could not be reconciled; unresolved records and files are kept for the next start (${error instanceof Error ? error.message : String(error)}).`;
+    console.error(message);
+    return { report: null, problems: [message] };
   }
 }
 
@@ -199,14 +215,20 @@ app.on("will-quit", () => library?.close());
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  const activateLibrary = async () => {
+    if (startupFailure && !startupFailure.isDestroyed()) {
+      if (startupFailure.isMinimized()) startupFailure.restore();
+      startupFailure.show();
+      startupFailure.focus();
+    } else if (sessions) {
+      await windows.openLibrary();
+    }
+  };
   app.on("second-instance", () => {
-    app
-      .whenReady()
-      .then(() => windows.openLibrary())
-      .catch(console.error);
+    app.whenReady().then(activateLibrary).catch(console.error);
   });
   app.on("activate", () => {
-    windows.openLibrary().catch(console.error);
+    activateLibrary().catch(console.error);
   });
   app
     .whenReady()
@@ -214,10 +236,7 @@ if (!app.requestSingleInstanceLock()) {
       try {
         library = openConfiguredLibrary();
       } catch (error) {
-        console.error(
-          `Borges cannot open its library: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        app.exit(1);
+        startupFailure = await showStartupFailure(error, configuredLibraryRoot);
         return;
       }
       if (
@@ -258,7 +277,8 @@ if (!app.requestSingleInstanceLock()) {
       );
       // Content/network boundaries above are in place before the first await;
       // windows open only after interrupted operations are settled.
-      const catalog = catalogInfo(library, await reconcile(library));
+      const reconciliation = await reconcile(library);
+      const catalog = catalogInfo(library, reconciliation.report);
       ipcMain.handle("development:runtime", (event) => {
         windows.identityFor(event);
         return runtimeInfo(catalog);
@@ -299,6 +319,7 @@ if (!app.requestSingleInstanceLock()) {
         root: opened.root,
         windows,
         readers,
+        startupProblems: reconciliation.problems,
       });
       ipcMain.handle("reader:open-book", (event) =>
         openAssignedBook(opened, readers, event),
@@ -329,8 +350,12 @@ if (!app.requestSingleInstanceLock()) {
       });
       await windows.openLibrary();
     })
-    .catch((error: unknown) => {
-      console.error(error);
-      app.exit(1);
+    .catch(async (error: unknown) => {
+      try {
+        startupFailure = await showStartupFailure(error, configuredLibraryRoot);
+      } catch (windowError) {
+        console.error(windowError);
+        app.exit(1);
+      }
     });
 }
