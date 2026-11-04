@@ -234,4 +234,19 @@ export const catalogMigrations: readonly Migration[] = [
         .run(randomUUID(), now);
     },
   },
+  {
+    version: 2,
+    description: "Reader session generations",
+    up(database) {
+      // books.session_generation is the only reader session allowed to write
+      // that book's progress; opening, reload, close, replacement and reread
+      // advance it. A position records the generation/sequence that wrote it.
+      database.exec(`
+        ALTER TABLE books ADD COLUMN session_generation INTEGER NOT NULL
+          DEFAULT 0 CHECK (session_generation >= 0);
+        ALTER TABLE positions ADD COLUMN generation INTEGER NOT NULL
+          DEFAULT 0 CHECK (generation >= 0);
+      `);
+    },
+  },
 ];

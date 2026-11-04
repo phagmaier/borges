@@ -235,3 +235,28 @@ Evidence (all on real files/processes, no SQLite or filesystem mocks):
 - `mise run smoke`: 25 native cases pass, including the startup check of the development catalog layout. `mise run measure` passes every budget. Launch timing is now measured to the window showing the validated catalog identity: warm median 0.64 s (was 0.52–0.59 s with the diagnostic counter), evicted max 2.94 s, first run 3.59 s. This was one run, before two small review fixes to lock-owner error cleanup and Trash ownership, which do not affect startup timing.
 
 Limits: lock exclusion relies on POSIX advisory locks, so the root must be local (not NFS/odd FUSE). Startup refusals are stderr-only. A catalog with user-added indexes counts as damaged. Snapshots are never pruned. Schema 1 does not persist session generation. No progress endpoint, file publication/reconciliation, library service, or 500-entry/catalog-search measurement exists yet; the planned milestone-two tasks own those.
+
+## Progress storage and session generations (M2-02)
+
+Implemented and reviewed on 2026-11-03 without dependency changes. Schema 2 is the first production migration. It adds `books.session_generation` and `positions.generation`, and existing schema-1 catalogs upgrade after a verified snapshot. `src/library/progress.ts` holds the storage half of the progress contract; see [architecture](architecture.md#process-and-content-boundaries). No IPC endpoint calls it yet: reader windows still open diagnostic fixtures, not catalog books, so sender-window binding and the native forged/stale checks move to M2-05.
+
+Evidence:
+
+- `mise run check`: 112 unit cases. `tests/unit/progress.test.ts` (25 cases, real catalog files) covers the following:
+  - grants that restore the last committed PDF position/sizing and an EPUB CFI with chapter/fraction context after closing and reopening the catalog;
+  - unknown and deleted books;
+  - a reload retiring the earlier window's session, whose late write is rejected while the new generation starts again at sequence 1;
+  - an ended session that rejects writes and can be ended only once;
+  - replayed and reordered sequences;
+  - a replacement-style revision switch that rejects the old session with either revision ID and keeps the retired revision's position;
+  - a write naming another book's revision;
+  - 13 malformed messages, each rejected without writing;
+  - an injected failure on the sizing statement that leaves position and sizing unchanged, with the sequence retryable;
+  - a real child process killed after three acknowledged saves, whose last acknowledged position survives;
+  - a schema-1 catalog whose old position survives the upgrade and is superseded by the first write of a new generation.
+- Mutations fail tests: dropping the revision, generation or sequence check, or not advancing the generation on a grant.
+- `mise run smoke-packaged`: 6 cases. The new case upgrades a real schema-1 catalog in the relocated bundled runtime, reports `upgradedFrom: 1` with the same library ID, and leaves exactly one verified schema-1 snapshot. `mise run smoke`: all 25 native cases pass with schema 2.
+- Save latency: a scratch script made 100 sequential committed saves in a temporary library on `/home` (btrfs on the 7200 rpm HDD, WAL with `synchronous = FULL`). Two runs gave a median of 41.6 ms, p95 41.8–41.9 ms and a maximum of 50–73 ms. This meets the one-second persistence target. Each save blocks the main thread for that long, so M2-05 should coalesce saves (for example, the latest position at most every few hundred milliseconds plus a flush on close) rather than commit on every page turn.
+
+Limits: no sender binding, IPC or acknowledgement UI yet (M2-05). Status/`last_opened_at` transitions are not applied on open (M2-04). Durability was tested across process kills, not power loss.
+

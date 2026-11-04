@@ -1,5 +1,9 @@
 // Real child process for lock and crash tests; run directly by Node.
 import { mkdirSync } from "node:fs";
+import {
+  beginReaderSession,
+  saveProgress,
+} from "../../src/library/progress.ts";
 import { openLibrary } from "../../src/storage/catalog.ts";
 import { acquireRootLock } from "../../src/storage/lock.ts";
 import { catalogMigrations } from "../../src/storage/schema.ts";
@@ -18,7 +22,8 @@ if (mode === "hold-lock") {
   openLibrary({
     root,
     migrations: [
-      ...catalogMigrations,
+      // A schema-1 build's runner with a synthetic interrupted version 2.
+      ...catalogMigrations.slice(0, 1),
       {
         version: 2,
         description: "Interrupted upgrade",
@@ -37,6 +42,22 @@ if (mode === "hold-lock") {
       },
     ],
   });
+} else if (mode === "save-then-hang") {
+  // Commit three acknowledged positions for book b1, then stop responding.
+  const { database } = openLibrary({ root });
+  const { bookId, revisionId, generation } = beginReaderSession(database, "b1");
+  for (const sequence of [1, 2, 3]) {
+    const ack = saveProgress(database, {
+      bookId,
+      revisionId,
+      generation,
+      sequence,
+      location: { format: "pdf", page: sequence * 10, x: 0, y: 0.5 },
+      sizing: { fontSize: 16, zoom: 1.5 },
+    });
+    console.log(`acked ${ack.sequence}`);
+  }
+  block();
 } else {
   throw new Error(`unknown mode ${mode}`);
 }

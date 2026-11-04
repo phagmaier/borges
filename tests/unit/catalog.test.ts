@@ -1,4 +1,3 @@
-import { type ChildProcess, spawn } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -12,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -29,18 +28,19 @@ import {
   toLibraryPath,
 } from "../../src/storage/paths";
 import { catalogMigrations, type Migration } from "../../src/storage/schema";
+import { addBook, kill, killChildren, startChild } from "./library-fixtures";
 
+const latest = catalogMigrations.length;
 let temporary: string;
 let root: string;
 const open: Library[] = [];
-const children: ChildProcess[] = [];
 
 beforeEach(() => {
   temporary = mkdtempSync(join(tmpdir(), "borges-catalog-"));
   root = join(temporary, "library");
 });
 afterEach(() => {
-  for (const child of children.splice(0)) child.kill("SIGKILL");
+  killChildren();
   for (const library of open.splice(0)) library.close();
   rmSync(temporary, { recursive: true, force: true });
 });
@@ -58,30 +58,6 @@ function closeAll() {
   for (const library of open.splice(0)) library.close();
 }
 
-/** Insert a live book with its current revision, as one transaction. */
-function addBook(
-  database: DatabaseSync,
-  { book, revision, title }: { book: string; revision: string; title: string },
-) {
-  database.exec("BEGIN");
-  try {
-    database
-      .prepare(
-        "INSERT INTO books (id, current_revision_id, title, created_at, updated_at) VALUES (?, ?, ?, 1, 1)",
-      )
-      .run(book, revision, title);
-    database
-      .prepare(
-        "INSERT INTO revisions (id, book_id, format, path, sha256, size, original_filename, created_at) VALUES (?, ?, 'pdf', ?, ?, 3, 'a.pdf', 1)",
-      )
-      .run(revision, book, `files/${revision}.pdf`, "a".repeat(64));
-    database.exec("COMMIT");
-  } catch (error) {
-    database.exec("ROLLBACK");
-    throw error;
-  }
-}
-
 function external(path = join(root, "catalog.sqlite")) {
   return new DatabaseSync(path);
 }
@@ -94,27 +70,6 @@ function catalogError(action: () => unknown): CatalogError {
     throw error;
   }
   throw new Error("expected a CatalogError");
-}
-
-function startChild(mode: string, ready: string): Promise<ChildProcess> {
-  const child = spawn(
-    process.execPath,
-    [resolve("tests/unit/storage-child.ts"), mode, root],
-    { stdio: ["ignore", "pipe", "inherit"] },
-  );
-  children.push(child);
-  return new Promise((done, fail) => {
-    child.stdout?.on("data", (chunk) => {
-      if (String(chunk).includes(ready)) done(child);
-    });
-    child.on("exit", (code) => fail(new Error(`child exited ${code}`)));
-  });
-}
-
-async function kill(child: ChildProcess) {
-  const exited = new Promise((done) => child.once("exit", done));
-  child.kill("SIGKILL");
-  await exited;
 }
 
 describe("library root and durable paths", () => {
@@ -191,7 +146,7 @@ describe("catalog creation and identity", () => {
     expect(first).toMatchObject({
       created: true,
       upgrade: null,
-      schemaVersion: 1,
+      schemaVersion: latest,
     });
     expect(first.libraryId).toMatch(/^[0-9a-f-]{36}$/);
     for (const directory of ["files", "covers", "staging", "recovery"])
@@ -217,14 +172,14 @@ describe("catalog creation and identity", () => {
     const database = external();
     try {
       expect(database.prepare("PRAGMA user_version").get()).toEqual({
-        user_version: 1,
+        user_version: latest,
       });
       expect(database.prepare("PRAGMA application_id").get()).toEqual({
         application_id: 0x426f7267,
       });
       expect(
         database.prepare("SELECT version FROM schema_migrations").all(),
-      ).toEqual([{ version: 1 }]);
+      ).toEqual(catalogMigrations.map(({ version }) => ({ version })));
     } finally {
       database.close();
     }
@@ -443,8 +398,8 @@ describe("catalog refusal leaves the database unchanged", () => {
 
   it("refuses a newer schema", () => {
     prepareThenRefuse(
-      "PRAGMA user_version = 2; CREATE TABLE future_data (v TEXT); INSERT INTO future_data VALUES ('retain');",
-      { code: "newer-schema", text: "uses schema 2" },
+      `PRAGMA user_version = ${latest + 1}; CREATE TABLE future_data (v TEXT); INSERT INTO future_data VALUES ('retain');`,
+      { code: "newer-schema", text: `uses schema ${latest + 1}` },
     );
     expect(readdirSync(join(root, "recovery"))).toEqual([]);
   });
@@ -473,7 +428,7 @@ describe("catalog refusal leaves the database unchanged", () => {
   ])("refuses a damaged supported schema: %s", (_, sql) => {
     prepareThenRefuse(sql, {
       code: "damaged",
-      text: "does not match schema 1",
+      text: `does not match schema ${latest}`,
     });
   });
 
@@ -488,6 +443,8 @@ describe("catalog refusal leaves the database unchanged", () => {
 });
 
 describe("forward-only upgrades", () => {
+  // Exercise the runner from a schema-1 build with a synthetic version 2.
+  const schema1 = catalogMigrations.slice(0, 1);
   const version2: Migration = {
     version: 2,
     description: "Sortable titles",
@@ -500,7 +457,7 @@ describe("forward-only upgrades", () => {
   };
 
   function seedVersion1() {
-    addBook(openAt().database, {
+    addBook(openAt(root, schema1).database, {
       book: "b1",
       revision: "r1",
       title: "The Aleph",
@@ -510,7 +467,7 @@ describe("forward-only upgrades", () => {
 
   it("snapshots the old catalog inside the root, then upgrades once", () => {
     seedVersion1();
-    const upgraded = openAt(root, [...catalogMigrations, version2]);
+    const upgraded = openAt(root, [...schema1, version2]);
     expect(upgraded.upgrade).toMatchObject({ from: 1, to: 2 });
     expect(upgraded.schemaVersion).toBe(2);
     expect(
@@ -533,7 +490,7 @@ describe("forward-only upgrades", () => {
     } finally {
       copy.close();
     }
-    const again = openAt(root, [...catalogMigrations, version2]);
+    const again = openAt(root, [...schema1, version2]);
     expect(again.upgrade).toBeNull();
     expect(
       again.database
@@ -543,7 +500,7 @@ describe("forward-only upgrades", () => {
     expect(readdirSync(join(root, "recovery"))).toHaveLength(1);
     // The upgraded catalog is now newer than a version-1 build supports.
     closeAll();
-    expect(catalogError(() => openAt()).code).toBe("newer-schema");
+    expect(catalogError(() => openAt(root, schema1)).code).toBe("newer-schema");
   });
 
   it.each([
@@ -566,33 +523,30 @@ describe("forward-only upgrades", () => {
   ])("rolls back a migration that %s", (_, up, text) => {
     seedVersion1();
     const error = catalogError(() =>
-      openAt(root, [
-        ...catalogMigrations,
-        { version: 2, description: "Broken", up },
-      ]),
+      openAt(root, [...schema1, { version: 2, description: "Broken", up }]),
     );
     expect(error.code).toBe("migration-failed");
     expect(error.message).toContain(text);
     expect(error.message).toContain("remains at schema 1");
     // A version-1 build still opens the intact catalog with its data.
-    const intact = openAt();
+    const intact = openAt(root, schema1);
     expect(intact.database.prepare("SELECT title FROM books").get()).toEqual({
       title: "The Aleph",
     });
     closeAll();
     expect(readdirSync(join(root, "recovery"))).toHaveLength(1);
-    const fixed = openAt(root, [...catalogMigrations, version2]);
+    const fixed = openAt(root, [...schema1, version2]);
     expect(fixed.upgrade?.from).toBe(1);
   });
 
   it("recovers the old catalog after the process is killed mid-upgrade", async () => {
     seedVersion1();
-    const child = await startChild("crash-during-upgrade", "migrating");
+    const child = await startChild("crash-during-upgrade", root, "migrating");
     // Uncommitted upgrade pages reached the WAL before the kill.
     expect(existsSync(join(root, "catalog.sqlite-wal"))).toBe(true);
     await kill(child);
 
-    const intact = openAt();
+    const intact = openAt(root, schema1);
     expect(intact.schemaVersion).toBe(1);
     expect(intact.database.prepare("SELECT title FROM books").get()).toEqual({
       title: "The Aleph",
@@ -600,7 +554,7 @@ describe("forward-only upgrades", () => {
     // The killed holder's lock was released by the kernel and recovered.
     expect(intact.recoveredStaleLock?.pid).toBe(child.pid);
     closeAll();
-    expect(openAt(root, [...catalogMigrations, version2]).upgrade?.to).toBe(2);
+    expect(openAt(root, [...schema1, version2]).upgrade?.to).toBe(2);
   });
 });
 
@@ -621,7 +575,7 @@ describe("exclusive library-root lock", () => {
   });
 
   it("explains a live holder in another process and recovers only after it dies", async () => {
-    const child = await startChild("hold-lock", "locked");
+    const child = await startChild("hold-lock", root, "locked");
     let error: unknown;
     try {
       openAt();
