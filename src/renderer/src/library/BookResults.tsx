@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { BookSummary } from "../../../shared/runtime";
+import { Cover } from "./Cover";
 import { statusLabels } from "./views";
 
 export type Layout = "grid" | "list";
@@ -20,22 +21,6 @@ interface BookResultsProps {
 
 const authorLine = (book: BookSummary) =>
   book.authors.length > 0 ? book.authors.join(", ") : "Unknown author";
-
-/** Placeholder until covers exist (M3-05): format and title initials. */
-function CoverPlaceholder({ book }: { book: BookSummary }) {
-  const initials = book.title
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word.charAt(0).toUpperCase())
-    .join("");
-  return (
-    <span className={`cover placeholder ${book.format}`} aria-hidden="true">
-      <span className="initials">{initials}</span>
-      <span className="format">{book.format.toUpperCase()}</span>
-    </span>
-  );
-}
 
 function Status({ book }: { book: BookSummary }) {
   return (
@@ -176,7 +161,7 @@ function Rendered({
             className="title-button"
             onClick={() => onOpen(book)}
           >
-            <CoverPlaceholder book={book} />
+            <Cover book={book} />
             <span className="title">{book.title}</span>
           </button>
           <span className="authors">{authorLine(book)}</span>

@@ -296,6 +296,7 @@ if (!app.requestSingleInstanceLock()) {
       const libraryRequests = registerLibraryIpc({
         ipcMain,
         database: opened.database,
+        root: opened.root,
         windows,
         readers,
       });

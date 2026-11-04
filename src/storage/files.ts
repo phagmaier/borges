@@ -23,6 +23,7 @@ export async function copyToNewFile(
   source: FileHandle,
   target: string,
   afterChunk: () => void = () => {},
+  maxBytes: number = Number.POSITIVE_INFINITY,
 ): Promise<FileDigest> {
   const hash = createHash("sha256");
   const output = await open(
@@ -36,6 +37,8 @@ export async function copyToNewFile(
     for (;;) {
       const { bytesRead } = await source.read(buffer, 0, CHUNK, size);
       if (bytesRead === 0) break;
+      if (size + bytesRead > maxBytes)
+        throw new Error(`File exceeds ${maxBytes} bytes.`);
       const chunk = buffer.subarray(0, bytesRead);
       await writeAll(output, chunk);
       hash.update(chunk);

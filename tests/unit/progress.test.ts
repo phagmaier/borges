@@ -343,7 +343,7 @@ describe("schema 2 upgrade", () => {
       "INSERT INTO positions (revision_id, format, pdf_page, pan_x, pan_y, sequence, updated_at) VALUES ('old-1', 'pdf', 77, 0, 0, 40, 1)",
     );
     reopen();
-    expect(library?.upgrade).toMatchObject({ from: 1, to: 2 });
+    expect(library?.upgrade).toMatchObject({ from: 1, to: 3 });
     const grant = beginReaderSession(database, "old");
     expect(grant).toMatchObject({
       generation: 1,

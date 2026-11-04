@@ -37,6 +37,7 @@ export function SelectionBar({
   const choices = flattenSections(sections);
   const [target, setTarget] = useState("");
   const [editing, setEditing] = useState<BookSummary | null>(null);
+  const [coverBusy, setCoverBusy] = useState(false);
   const confirm = useRef<HTMLDialogElement>(null);
   const ids = useId();
   const books = (n: number) => `${n} ${n === 1 ? "book" : "books"}`;
@@ -59,6 +60,20 @@ export function SelectionBar({
         true,
       );
     else onMessage(done[action].replace("{n}", books(succeeded)), false);
+  }
+
+  async function chooseCover(book: BookSummary) {
+    setCoverBusy(true);
+    try {
+      const result = await window.borges.library.chooseCover(book.id);
+      if (!result.ok) onMessage(result.message, true);
+      else if (result.value)
+        onMessage(`Saved cover for ${result.value.title}.`, false);
+    } catch (error) {
+      onMessage(String(error), true);
+    } finally {
+      setCoverBusy(false);
+    }
   }
 
   async function add() {
@@ -138,9 +153,18 @@ export function SelectionBar({
         Start Rereading…
       </button>
       {count === 1 && selected[0] ? (
-        <button type="button" onClick={() => setEditing(selected[0] ?? null)}>
-          Edit details
-        </button>
+        <>
+          <button type="button" onClick={() => setEditing(selected[0] ?? null)}>
+            Edit details
+          </button>
+          <button
+            type="button"
+            disabled={coverBusy}
+            onClick={() => selected[0] && void chooseCover(selected[0])}
+          >
+            {coverBusy ? "Saving cover…" : "Choose cover…"}
+          </button>
+        </>
       ) : null}
       {choices.length > 0 ? (
         <>

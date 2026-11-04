@@ -138,6 +138,13 @@ export interface BorgesApi {
       bookId: string,
       edit: MetadataEdit,
     ): Promise<LibraryResult<BookSummary>>;
+    /** Open main's local image chooser. Null means cancelled. */
+    chooseCover(bookId: string): Promise<LibraryResult<BookSummary | null>>;
+    /** Only the current approved cover, requested lazily by visible cards. */
+    cover(
+      bookId: string,
+      token: string,
+    ): Promise<LibraryResult<Uint8Array | null>>;
     /** Open or focus the book's reader window. */
     openBook(bookId: string): Promise<LibraryResult<null>>;
     /** Called after any catalog change, including a reader's open. */

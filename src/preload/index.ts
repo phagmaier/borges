@@ -44,6 +44,9 @@ const borges: BorgesApi = {
       ipcRenderer.invoke("library:start-rereading", bookId),
     editMetadata: (bookId, edit) =>
       ipcRenderer.invoke("library:edit-metadata", bookId, edit),
+    chooseCover: (bookId) => ipcRenderer.invoke("library:choose-cover", bookId),
+    cover: (bookId, token) =>
+      ipcRenderer.invoke("library:cover", bookId, token),
     openBook: (bookId) => ipcRenderer.invoke("library:open-book", bookId),
     onChanged(listener) {
       const handler = () => listener();

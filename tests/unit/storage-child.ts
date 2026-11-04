@@ -1,5 +1,6 @@
 // Real child process for lock and crash tests; run directly by Node.
 import { mkdirSync } from "node:fs";
+import { setManualCover } from "../../src/library/covers.ts";
 import { addFileAsNewBook, type ImportStep } from "../../src/library/import.ts";
 import {
   beginReaderSession,
@@ -59,6 +60,19 @@ if (mode === "hold-lock") {
     console.log(`acked ${ack.sequence}`);
   }
   block();
+} else if (mode === "cover-and-stop") {
+  const [source, step] = extra as [string, ImportStep];
+  const library = openLibrary({ root });
+  await setManualCover(library, "b1", source, {
+    // Storage/crash checks isolate the decoder, exercised by native tests.
+    normalize: (bytes) => bytes,
+    checkpoint(reached) {
+      if (reached !== step) return;
+      console.log(`at ${step}`);
+      block();
+    },
+  });
+  throw new Error(`never reached ${step}`);
 } else if (mode === "import-and-stop") {
   // Add `source` as a new book and hang at protocol point `step`.
   const [source, step] = extra as [string, ImportStep];

@@ -1,5 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { IpcMain, IpcMainInvokeEvent } from "electron";
+import {
+  BrowserWindow,
+  dialog,
+  type IpcMain,
+  type IpcMainInvokeEvent,
+} from "electron";
 import {
   archiveBook,
   editMetadata,
@@ -7,6 +12,7 @@ import {
   startRereading,
   unarchiveBook,
 } from "../library/books.ts";
+import { readCover, setManualCover } from "../library/covers.ts";
 import {
   getBook,
   listFilterTerms,
@@ -24,6 +30,7 @@ import {
   renameSection,
 } from "../library/sections.ts";
 import type { LibraryResult } from "../shared/runtime.ts";
+import { normalizeCover } from "./cover-image.ts";
 import type { ReaderSessions } from "./sessions.ts";
 import type { WindowCoordinator } from "./windows.ts";
 
@@ -33,6 +40,7 @@ export const LIBRARY_CHANGED = "library:changed";
 interface Dependencies {
   ipcMain: IpcMain;
   database: DatabaseSync;
+  root: string;
   windows: WindowCoordinator;
   readers: ReaderSessions;
 }
@@ -45,6 +53,7 @@ interface Dependencies {
 export function registerLibraryIpc({
   ipcMain,
   database,
+  root,
   windows,
   readers,
 }: Dependencies): { changed(): void } {
@@ -84,6 +93,40 @@ export function registerLibraryIpc({
   }
   const mutates = { mutates: true };
   const fields = (input: unknown) => (input ?? {}) as Record<string, unknown>;
+
+  handle("cover", (bookId, token) =>
+    readCover({ root, database }, bookId, token),
+  );
+  let choosingCover = false;
+  handle("choose-cover", async (bookId) => {
+    const book = getBook(database, bookId as string);
+    if (choosingCover)
+      throw new LibraryError("invalid", "A cover chooser is already open.");
+    const contents = windows.library();
+    const parent = contents && BrowserWindow.fromWebContents(contents);
+    if (!parent) throw new Error("The library window is closed.");
+    choosingCover = true;
+    try {
+      const choice = await dialog.showOpenDialog(parent, {
+        title: `Choose cover for ${book.title}`,
+        properties: ["openFile"],
+        filters: [
+          {
+            name: "Cover images (PNG, JPEG)",
+            extensions: ["png", "jpg", "jpeg"],
+          },
+        ],
+      });
+      if (choice.canceled || !choice.filePaths[0]) return null;
+      await setManualCover({ root, database }, book.id, choice.filePaths[0], {
+        normalize: normalizeCover,
+      });
+      changed();
+      return getBook(database, book.id);
+    } finally {
+      choosingCover = false;
+    }
+  });
 
   handle("books", (query) =>
     queryBooks(database, query ?? { view: { kind: "all" } }),

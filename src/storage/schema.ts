@@ -249,4 +249,21 @@ export const catalogMigrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 3,
+    description: "Manual cover publication",
+    up(database) {
+      // Rebuild the STRICT table to extend its kind CHECK. Preserve all rows
+      // and its partial index; the runner already made a verified snapshot.
+      database.exec(`
+        ALTER TABLE recovery_operations RENAME TO recovery_operations_old;
+        DROP INDEX recovery_operations_open;
+        ${version1
+          .slice(version1.indexOf("CREATE TABLE recovery_operations"))
+          .replace("'restore', 'purge'", "'restore', 'purge', 'cover'")}
+        INSERT INTO recovery_operations SELECT * FROM recovery_operations_old;
+        DROP TABLE recovery_operations_old;
+      `);
+    },
+  },
 ];

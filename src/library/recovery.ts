@@ -209,19 +209,26 @@ export async function rollBackOperation(
   const candidates = [record.stagedPath, record.publishedPath].filter(
     (path): path is string => path !== null,
   );
-  if (record.kind !== "import") {
+  if (record.kind !== "import" && record.kind !== "cover") {
     return retain(
       `this build cannot reconcile ${record.kind} operations`,
       candidates,
       [],
     );
   }
-  if (referencedByCatalog(database, record)) {
+  if (
+    record.kind === "cover" &&
+    (record.stagedPath !== `staging/${record.id}.partial` ||
+      (record.publishedPath !== null &&
+        record.publishedPath !== `covers/${record.id}.png`))
+  )
     return retain(
-      "the catalog already references its revision",
+      "its paths do not belong to this cover operation",
       candidates,
       [],
     );
+  if (referencedByCatalog(database, record)) {
+    return retain("the catalog already references its bytes", candidates, []);
   }
   const present: string[] = [];
   for (const path of candidates) {
@@ -267,7 +274,7 @@ export async function rollBackOperation(
   }
   const text = `${operationLabel(record)} was ${reason} and has been rolled back${
     removed.length ? ` (removed ${removed.join(", ")})` : ""
-  }. The source file was not changed; import it again if needed.`;
+  }. The source file was not changed; ${record.kind === "cover" ? "choose the cover again" : "import it again"} if needed.`;
   immediate(database, () =>
     setOperationState(
       database,
@@ -290,6 +297,19 @@ function referencedByCatalog(
   database: DatabaseSync,
   record: OperationRecord,
 ): boolean {
+  if (record.kind === "cover") {
+    return Boolean(
+      database
+        .prepare(`SELECT 1 FROM books WHERE cover_path IN (?, ?)
+      UNION ALL SELECT 1 FROM revisions WHERE extracted_cover_path IN (?, ?) LIMIT 1`)
+        .get(
+          record.stagedPath,
+          record.publishedPath,
+          record.stagedPath,
+          record.publishedPath,
+        ),
+    );
+  }
   return Boolean(
     database
       .prepare(
@@ -311,6 +331,9 @@ async function unrecognizedEntries(library: LibraryHandle): Promise<string[]> {
   for (const row of database
     .prepare(
       `SELECT path FROM revisions
+       UNION SELECT cover_path FROM books
+       UNION SELECT extracted_cover_path FROM revisions
+       UNION SELECT published_path FROM recovery_operations WHERE kind = 'cover' AND state = 'committed'
        UNION SELECT staged_path FROM recovery_operations
          WHERE state NOT IN ('committed', 'abandoned')
        UNION SELECT published_path FROM recovery_operations
@@ -320,7 +343,7 @@ async function unrecognizedEntries(library: LibraryHandle): Promise<string[]> {
     if (row.path !== null) known.add(String(row.path));
   }
   const found: string[] = [];
-  for (const directory of ["staging", "files"]) {
+  for (const directory of ["staging", "files", "covers"]) {
     const entries = await readdir(resolveLibraryPath(root, directory));
     for (const entry of entries.sort()) {
       const path = `${directory}/${entry}`;

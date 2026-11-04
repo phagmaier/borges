@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { coverToken } from "./cover-image.ts";
 import type { BookFormat } from "./formats.ts";
 import {
   collator,
@@ -41,6 +42,8 @@ export interface BookSummary {
   authors: string[];
   subjects: string[];
   format: BookFormat;
+  /** Opaque key for requesting the current cover through library IPC. */
+  coverToken: string | null;
   status: ReadingStatus;
   archived: boolean;
   archivedAt: number | null;
@@ -297,7 +300,7 @@ function selectBooks(
   const rows = database
     .prepare(
       `SELECT b.id, b.title, b.reading_status AS status, b.archived_at,
-         b.last_opened_at, r.format,
+         b.last_opened_at, b.cover_path, r.format,
          (SELECT json_group_array(name ORDER BY position) FROM book_authors
             WHERE book_id = b.id) AS authors,
          (SELECT json_group_array(label) FROM book_subjects
@@ -316,6 +319,8 @@ function selectBooks(
       collator.compare,
     ),
     format: row.format as BookFormat,
+    coverToken:
+      typeof row.cover_path === "string" ? coverToken(row.cover_path) : null,
     status: row.status as ReadingStatus,
     archived: row.archived_at !== null,
     archivedAt: row.archived_at === null ? null : Number(row.archived_at),

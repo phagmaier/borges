@@ -126,7 +126,7 @@ test("relocated runtime keeps one catalog across restarts and a moved root", asy
       sandboxed: true,
       contextIsolated: true,
       catalog: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         root: libraryRoot,
         created: true,
         upgradedFrom: null,
@@ -257,16 +257,16 @@ for (const scenario of [
     name: "newer schema",
     prepare: (database: DatabaseSync) =>
       database.exec(
-        "PRAGMA user_version = 3; CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('keep this');",
+        "PRAGMA user_version = 4; CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('keep this');",
       ),
-    error: "uses schema 3, but this Borges build supports schema 2 at most",
+    error: "uses schema 4, but this Borges build supports schema 3 at most",
   },
   {
     name: "damaged supported schema",
     prepare: (database: DatabaseSync) =>
       database.exec("DROP TABLE trash_entries"),
     catalog: true,
-    error: "does not match schema 2",
+    error: "does not match schema 3",
   },
   {
     name: "foreign database",
@@ -294,41 +294,47 @@ for (const scenario of [
   });
 }
 
-test("packaged startup upgrades a schema-1 catalog after a verified snapshot", async () => {
-  const libraryRoot = libraryFor(profile);
-  const old = openLibrary({
-    root: libraryRoot,
-    migrations: catalogMigrations.slice(0, 1),
-  });
-  const { libraryId } = old;
-  old.close();
-  const application = await launch();
-  try {
-    expect((await catalogOf(application)).info.catalog).toMatchObject({
-      libraryId,
-      schemaVersion: 2,
-      created: false,
-      upgradedFrom: 1,
+for (const from of [1, 2]) {
+  test(`packaged startup upgrades a schema-${from} catalog after a verified snapshot`, async () => {
+    const libraryRoot = libraryFor(profile);
+    const old = openLibrary({
+      root: libraryRoot,
+      migrations: catalogMigrations.slice(0, from),
     });
-  } finally {
-    await application.close();
-  }
-  const snapshots = await readdir(join(libraryRoot, "recovery"));
-  expect(snapshots).toEqual([
-    expect.stringMatching(/^catalog-schema-1-before-2-.*\.sqlite$/),
-  ]);
-  const snapshot = new DatabaseSync(
-    join(libraryRoot, "recovery", snapshots[0] ?? ""),
-    {
-      readOnly: true,
-    },
-  );
-  try {
-    expect(snapshot.prepare("PRAGMA user_version").get()?.user_version).toBe(1);
-  } finally {
-    snapshot.close();
-  }
-});
+    const { libraryId } = old;
+    old.close();
+    const application = await launch();
+    try {
+      expect((await catalogOf(application)).info.catalog).toMatchObject({
+        libraryId,
+        schemaVersion: 3,
+        created: false,
+        upgradedFrom: from,
+      });
+    } finally {
+      await application.close();
+    }
+    const snapshots = await readdir(join(libraryRoot, "recovery"));
+    expect(snapshots).toEqual([
+      expect.stringMatching(
+        new RegExp(`^catalog-schema-${from}-before-3-.*\\.sqlite$`),
+      ),
+    ]);
+    const snapshot = new DatabaseSync(
+      join(libraryRoot, "recovery", snapshots[0] ?? ""),
+      {
+        readOnly: true,
+      },
+    );
+    try {
+      expect(snapshot.prepare("PRAGMA user_version").get()?.user_version).toBe(
+        from,
+      );
+    } finally {
+      snapshot.close();
+    }
+  });
+}
 
 test("packaged readers open a catalog book, save its position and resume it", async () => {
   const sources = await mkdtemp(join(root, "sources-"));
