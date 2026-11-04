@@ -355,7 +355,10 @@ test("packaged readers open a catalog book, save its position and resume it", as
   async function read(application: ElectronApplication) {
     const library = await application.firstWindow();
     const opened = application.waitForEvent("window");
-    await library.getByRole("button", { name: "Read Known PDF" }).click();
+    await library
+      .getByRole("list", { name: "Books" })
+      .getByRole("button", { name: "Known PDF", exact: true })
+      .click();
     const reader = await opened;
     const ui = reader.frameLocator('iframe[title="Book content"]');
     await expect(ui.getByRole("status")).toHaveText("Ready");

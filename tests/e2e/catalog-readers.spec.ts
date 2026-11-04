@@ -1,7 +1,14 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ElectronApplication, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import {
+  acknowledged,
+  bookButton,
+  catalog,
+  openCatalogReader,
+  stored,
+} from "./catalog";
 import { expect, launch, test } from "./desktop";
 
 // Catalog books opened in real reader windows. Positions travel engine →
@@ -16,71 +23,6 @@ test.use({
     ],
   },
 });
-
-function catalog<T>(profile: string, read: (database: DatabaseSync) => T): T {
-  const database = new DatabaseSync(
-    join(profile, "library", "catalog.sqlite"),
-    {
-      readOnly: true,
-    },
-  );
-  try {
-    return read(database);
-  } finally {
-    database.close();
-  }
-}
-
-interface Stored {
-  status: string;
-  generation: number;
-  revision: string;
-  page: number | null;
-  cfi: string | null;
-  sequence: number | null;
-  fontSize: number | null;
-}
-function stored(profile: string, bookId: string): Stored {
-  return catalog(profile, (database) => {
-    const row = database
-      .prepare(
-        `SELECT b.reading_status AS status, b.session_generation AS generation,
-           b.current_revision_id AS revision, p.pdf_page AS page,
-           p.epub_cfi AS cfi, p.sequence AS sequence, s.font_size AS fontSize
-         FROM books b
-         LEFT JOIN positions p ON p.revision_id = b.current_revision_id
-         LEFT JOIN reader_settings s ON s.book_id = b.id
-         WHERE b.id = ?`,
-      )
-      .get(bookId);
-    if (!row) throw new Error(`no book ${bookId}`);
-    return { ...row } as unknown as Stored;
-  });
-}
-
-async function openCatalogReader(
-  application: ElectronApplication,
-  title: string,
-) {
-  const library = await application.firstWindow();
-  const opened = application.waitForEvent("window");
-  await library.getByRole("button", { name: `Read ${title}` }).click();
-  const reader = await opened;
-  const ui = reader.frameLocator('iframe[title="Book content"]');
-  await expect(ui.getByRole("status")).toHaveText("Ready");
-  return { library, reader, ui };
-}
-
-/** Wait until the reader shell shows an acknowledged save. */
-async function acknowledged(reader: Page, atLeast = 1) {
-  await expect
-    .poll(async () =>
-      Number(
-        await reader.getByTestId("save-status").getAttribute("data-sequence"),
-      ),
-    )
-    .toBeGreaterThanOrEqual(atLeast);
-}
 
 test("catalog readers save positions centrally and resume after reopening and restart", async ({
   application,
@@ -186,7 +128,10 @@ test("the library window queries the catalog; malformed queries and readers are 
     page.evaluate(
       (value) =>
         window.borges.library.books(value as never).then(
-          (books) => books.map((book) => book.title),
+          (result) =>
+            result.ok
+              ? result.value.map((book) => book.title)
+              : `${result.code}: ${result.message}`,
           (error: unknown) => `rejected: ${String(error)}`,
         ),
       input,
@@ -207,7 +152,7 @@ test("the library window queries the catalog; malformed queries and readers are 
   );
   const { reader } = await openCatalogReader(application, "Known PDF");
   expect(await query(reader, undefined)).toContain(
-    "Only the library window may list books.",
+    "Only the library window may do this.",
   );
 });
 
@@ -403,7 +348,7 @@ test.describe("failed opens", () => {
     const broken = seeded["Broken PDF"] as string;
     const library = await application.firstWindow();
     const opened = application.waitForEvent("window");
-    await library.getByRole("button", { name: "Read Broken PDF" }).click();
+    await bookButton(library, "Broken PDF").click();
     const reader = await opened;
     await expect(reader.getByRole("alert")).toContainText(
       "could not be opened",
@@ -426,7 +371,7 @@ test.describe("failed opens", () => {
     );
     await rm(join(profile, "library", path));
     const missing = application.waitForEvent("window");
-    await library.getByRole("button", { name: "Read Known PDF" }).click();
+    await bookButton(library, "Known PDF").click();
     const missingReader = await missing;
     await expect(missingReader.getByRole("alert")).toContainText(
       "could not be read from the library",

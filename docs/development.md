@@ -1,6 +1,6 @@
 # Development setup
 
-The development environment is installed on the user's Arch Linux/Hyprland desktop. The diagnostic Electron shell opens one library and named readers with bundled known PDF/EPUB fixtures. Engine navigation/search/sizing, explicit snapshot restoration, diagnostic adversarial isolation, packaged-runtime SQLite/schema handling, catalog readers with central autosave, and packaged resource measurements with a 500-entry catalog (A13) are verified; the library UI and later milestones remain pending. It does not open/change user book files and uses a separate `borges-development` Electron profile. Its versioned, locked library catalog lives in `<profile>/library` for unpackaged builds; see [M2-01](#catalog-schema-migrations-and-root-lock-m2-01). Reopening an existing reader requests activation; this Hyprland policy answers with an urgency hint rather than focus, a recorded platform limit; see [M1-02 evidence](#multi-window-spike-m1-02).
+The development environment is installed on the user's Arch Linux/Hyprland desktop. The diagnostic Electron shell opens one library and named readers with bundled known PDF/EPUB fixtures. Engine navigation/search/sizing, explicit snapshot restoration, diagnostic adversarial isolation, packaged-runtime SQLite/schema handling, catalog readers with central autosave, packaged resource measurements with a 500-entry catalog (A13), and the library window (browsing, search/filters, sections and memberships, status/Archive actions and metadata editing; M3-01 to M3-04) are verified. Covers, startup problems in a window, visual prototypes and milestones four to six remain pending. It does not open/change user book files and uses a separate `borges-development` Electron profile. Its versioned, locked library catalog lives in `<profile>/library` for unpackaged builds; see [M2-01](#catalog-schema-migrations-and-root-lock-m2-01). Reopening an existing reader requests activation; this Hyprland policy answers with an urgency hint rather than focus, a recorded platform limit; see [M1-02 evidence](#multi-window-spike-m1-02).
 
 ## Start working
 
@@ -12,7 +12,7 @@ mise run dev
 
 This first builds the isolated reader and its bundled assets, then starts the main/preload builds, local Vite server, and Electron window. Trusted shell React/CSS edits hot reload; reader adapter/content changes require restarting `pnpm dev` to rebuild the isolated content bundle; main/preload changes can be watched with `pnpm dev --watch` through mise. Closing the last application window stops the development process. The local server and React-refresh CSP relaxation are development-only; the built app uses local assets and a strict CSP.
 
-Use **Open Sample PDF** and **Open Sample EPUB** to exercise separate reader shells. These diagnostic IDs load known fixtures. The extra Image-only PDF, Fixed EPUB, and Obfuscated-font EPUB entries exercise the other fixture variants. Reopening reuses the existing window and requests focus. Readers offer **Open library**; closing the library leaves readers running. The last window exits, or **Quit application** closes all windows. A second launch with the same development profile routes to the existing instance. Closing the library alone stops development only when no readers remain.
+The library window opens at All Books over the development catalog in `<profile>/library`. It starts empty: until import arrives in milestone four, books can be added only by the tests or, while the app is closed, with `mise exec -- node tests/unit/storage-child.ts add-books ~/.config/borges-development/library <files…>` (the default development profile). Its Development footer keeps the diagnostic fixture readers, Quit and runtime diagnostics. Use **Open Sample PDF** and **Open Sample EPUB** to exercise separate reader shells. These diagnostic IDs load known fixtures. The extra Image-only PDF, Fixed EPUB, and Obfuscated-font EPUB entries exercise the other fixture variants. Reopening reuses the existing window and requests focus. Readers offer **Open library**; closing the library leaves readers running. The last window exits, or **Quit application** closes all windows. A second launch with the same development profile routes to the existing instance. Closing the library alone stops development only when no readers remain.
 
 ```sh
 mise run check
@@ -33,6 +33,7 @@ Other commands, using `mise exec -- pnpm …` if the shell's mise hook is inacti
 | `pnpm package:runtime` | Build the minimal Linux diagnostic artifact in `dist/borges-runtime-check/` |
 | `pnpm test:packaged` | Build that artifact and verify relocated execution, catalog restarts/relocation, root-lock conflict/recovery, and catalog refusals |
 | `pnpm measure:runtime` | Build that artifact and record packaged measurements in `dist/measurements/latest.json` |
+| `node scripts/build-measure-catalog.ts <new root>` | Build the 500-entry measurement library once, for `BORGES_MEASURE_CATALOG` iteration (run through `mise exec --`) |
 | `pnpm start` | Run the built diagnostic shell |
 | `pnpm typecheck` | Strict TypeScript checks |
 | `pnpm lint` | Biome lint/format checks |
@@ -362,6 +363,99 @@ Findings:
 - **Saves land well inside one second.** A turn reaches a committed, acknowledged position in about 330–400 ms: the 250 ms coalescing interval plus the HDD commit and drawing.
 - **Catalog readers behave like the M1-07 diagnostic readers.** Both content frames still share one renderer process, which peaks at about 195 MiB after the searches. Opening takes about 0.1–0.4 s longer than serving fixtures did, which fits the extra IPC copy of the bytes and session grant. Closing readers leaves 30–34 MiB above idle (M1-07: 14–17 MiB). The open/close cycles bring it back to within ±4 MiB of idle, consistent with M1-07's reclaimable main-process growth; long sessions beyond 5 cycles were not rerun.
 
-`BORGES_MEASURE_CATALOG=<closed library root built from this plan>` copies a prebuilt library instead of seeding. It is for iterating on the suite only, and the report marks such runs. Recorded results above always seeded.
+`BORGES_MEASURE_CATALOG=<closed library root built from this plan>` copies a prebuilt library instead of seeding. It is for iterating on the suite only, and the report marks such runs. Recorded results above always seeded. Build such a root once with `mise exec -- node scripts/build-measure-catalog.ts dist/a13-template` (about 2.5 minutes; `dist/` is ignored by Git). Rebuild it whenever `tests/measure/catalog.ts` or `representative.ts` changes. Do not edit `src/` while `measure` runs: each run rebuilds and packages the working tree.
 
-Limits: one machine, display and scale; partial cold cache, as in M1-07. The library list is the diagnostic shell, not milestone three's grid, so list rendering and cover/thumbnail costs must be measured again with that UI (no thumbnail jobs exist to bound yet). Section views and filter-term listing have no IPC yet; their service timings are in [M2-04](#library-querysearch-service-m2-04). Catalog seeding needs about 2.5 minutes on this HDD, which makes `measure` take about 4 minutes.
+Limits: one machine, display and scale; partial cold cache, as in M1-07. These runs used the diagnostic list. [M3-02](#library-window-browsing-m3-02) re-measured the suite with the library grid, which renders in batches of 100. Cover costs remain for M3-05/M3-08 (no thumbnail jobs exist to bound yet). Section views and filter-term listing have no IPC yet; their service timings are in [M2-04](#library-querysearch-service-m2-04). Catalog seeding needs about 2.5 minutes on this HDD, which makes `measure` take about 4 minutes.
+
+## Library IPC (M3-01)
+
+Implemented and reviewed on 2026-11-03 without dependency or schema changes. The library window can now call the whole M2-04 service; see [architecture](architecture.md#library-service-m2-04) for the channel contract. Requests return a typed result instead of throwing, so the diagnostic list and the A13 measurement were adapted. The diagnostic library list now also refreshes on `library:changed`. Native catalog helpers moved to `tests/e2e/catalog.ts`.
+
+Evidence (real catalogs, real Electron windows):
+
+- `tests/e2e/library-ipc.spec.ts`, case 1, seeded with the Known PDF and Reflowable EPUB:
+  - Metadata: ordered authors, case-insensitive subject deduplication, a blank title (`invalid`), an unknown book, filter terms and an author filter.
+  - Sections: a parent and child section holding the PDF are counted once (A2); a case-insensitive root name clash; a move into its own child (`section-cycle`); a batch naming an unknown book adds nothing; rename and membership removal; a deletion preview and the deletion itself (2 sections, 1 book, 1 newly unfiled) leaving both books Unfiled.
+  - Status and Archive, independent (A4): Finish; Archive hiding a book from All Books but not from Archive; Unarchive.
+  - The catalog is checked directly, including the manual-authors flag. Exactly 11 change notifications arrive, one per successful change and none for reads or failures. Malformed queries are refused. A reader window calling four channels is refused and changes nothing.
+- Case 2: the library is notified when a reader's open makes the PDF Currently Reading. The reader is turned to page 3, then the book is marked Finished and Archived while open. Start Rereading returns Currently Reading and unarchived. The same window reloads to "Page 1 of 3" with a higher generation and the same revision, the library list shows Currently Reading, and a write carrying the old generation is rejected as `stale-session` with page 1 kept.
+- Mutations fail these cases: dropping the reader reload, the notification on open, Archive's notification, or the sender check.
+- `mise run check`: 178 unit cases. `mise run smoke`: 33 native cases. `mise run smoke-packaged`: 7. `mise run measure`: within budget.
+
+Limits: there is no library UI yet (M3-02 to M3-04). A reader's window title does not follow a title edit. Rereading an open reader ends its session before reloading. A position the old page sends in that interval is reported in that page as not saved, just before it reloads.
+
+## Library window browsing (M3-02)
+
+Implemented and reviewed on 2026-11-04 without dependency or schema changes. The library window (`src/renderer/src/library/`) replaces the diagnostic list; styling is provisional until M3-06.
+
+- **Sidebar:** All Books, Currently Reading, Finished, Unfiled, the nested section tree (unique-book counts, announced as each button's description), Archive and Trash. Trash is a placeholder until deletion arrives in milestone four.
+- **Toolbar:** search within the selected view, Author and Subject filters listing the view's terms with counts, an Include archived toggle (absent in Archive), and Grid/List layout.
+- **Results:** cards (a cover placeholder until M3-05, title, authors, status and an Archived badge) or a compact table. Each book's button is named by its title and opens or focuses its reader.
+- **Behavior:** search text carries across views; author and subject filters reset because their choices belong to a view. A deleted selected section falls back to All Books.
+- **Empty states:** an empty library (import arrives later), all books archived (with Show Archive), an empty view, and no matches (with Clear search and filters).
+- **Development area:** the diagnostic fixture readers, Quit and the runtime diagnostics stay in a footer.
+
+**Bounded rendering.** The first measurement with all 429 cards rendered failed two budgets: memory after closing readers was 90 MiB above idle, and one resumed open took 1.67 s. A throwaway probe on the packaged app with the 500-entry catalog showed what grows the library renderer: its JS heap stayed 10–32 MiB and its DOM was constant, but its PSS rose about 94 MiB over 10 refreshes that changed a title, and about 130 MiB over 10 hide/show cycles. Under repeated resizes it plateaued near 380 MiB, then fell to 148 MiB after 15 s idle. So this is reclaimable rendering memory that scales with the laid-out grid, not a leak; a tiling compositor resizes the library window whenever a reader opens.
+
+Two fixes followed. Refreshes that return identical data keep the previous state, so they render nothing; the focus-triggered refresh was dropped, since main pushes every change. Results also render in batches of 100: the next batch loads when the end is within 800 px of the viewport (so Tab and scrolling load continuously), a Show more button remains as a fallback, and a new view or query starts again from the first batch. A CSS `content-visibility: auto` attempt made reader opens 3.4–4.5 s and was reverted.
+
+Evidence:
+
+- `tests/e2e/library-window.spec.ts` (5 cases, seeded catalogs with metadata, nested sections and an archived book set up through the library service):
+  - A3 through the UI: view contents and order, unique section counts, Unfiled, Archive, the Trash placeholder, multi-term search, the include-archived toggle, the search carrying into a section view and Archive, no matches with clearing, filters with counts and their reset on a view change.
+  - Tab order from the search box through the toolbar to the books, a visible focus outline, opening with Enter, the library updating to Currently Reading without being refocused, list layout cells, and the deleted-section fallback.
+  - The all-archived and empty-view states, and an empty library.
+  - 130 entries: 100 rendered in numeric title order; focusing the 100th book loads the rest and keeps focus; another view starts from 100 again; scrolling loads the rest.
+- Mutations fail these cases: dropping the include-archived flag, the change-notification refresh, the deleted-section fallback, batching, or the batch reset.
+- Existing native tests now find books by title in the Books list (`tests/e2e/catalog.ts` `bookButton`), and find the library window by its Library navigation instead of the former heading, which only matched while the window identity loaded.
+- `mise run check`: 178 unit cases. `mise run smoke`: 38 native cases. One full run failed only the known `net.fetch` isolation flake (see M2-03), and the next two full runs passed 38/38. `mise run smoke-packaged`: 7.
+- `mise run measure` with the UI, in three seeded runs (the suite now opens the two books by searching the library and browses every batch after the reader measurements), all within budget:
+
+| Measure | Observed (M2-05 plain list in A13) |
+| --- | --- |
+| Warm launch to 429 counted and 100 rendered, median | 0.67–0.71 s (0.62–0.66 s) |
+| Evicted launch, max | 3.0–3.3 s (3.1–3.4 s) |
+| Catalog query p95, idle / readers open | ≤ 6.6 / ≤ 23.8 ms (same) |
+| Reader open, PDF / EPUB | 0.65–1.18 s / 0.55–0.66 s; one PDF first-open outlier per run or two, cause not established (0.66–0.71 / 0.63–0.67 s) |
+| Total PSS idle; library renderer | 294–301 MiB; 91–101 MiB (280–283; 83 MiB) |
+| Two readers after search | 565–596 MiB (548–557 MiB) |
+| Closed readers over idle | 36–42 MiB (30–34 MiB) |
+| Showing all 429 entries | 0.56–0.61 s; 363–391 MiB total, library renderer 159–161 MiB |
+
+Kernel access times still show exactly the two opened book files read. The report also records the library renderer's JS heap and DOM node count.
+
+Limits: covers are placeholders (M3-05), so image decoding is not yet measured. Section management, selection and book actions are M3-03/M3-04. Keyboard navigation between cards uses Tab; there are no arrow-key grid semantics. Appearance is provisional.
+
+## Sections and memberships in the UI (M3-03)
+
+Implemented and reviewed on 2026-11-04 without dependency or schema changes.
+
+- **Sections:** the sidebar offers New section under the tree. A selected section offers New subsection, Rename section, Move section and Delete section above its results. The move choices are Top level and every section outside the moved section's own branch, with the current parent preselected. Forms trim names; Escape or Cancel closes them. The service's explanation (for example "Another top-level section is already named “Fiction”.") appears without losing the typed text. A created section is shown at once.
+- **Deletion:** a modal dialog states the subsections deleted, the books losing a membership, and those becoming Unfiled, from the deletion preview, and says that no book is deleted. Cancel changes nothing.
+- **Memberships:** each book has a "Select <title>" checkbox. With a selection, a sticky Selected books bar can add the books to any section (shown by path, keeping other memberships) and, in a section view, remove their direct membership there. If the books are still listed through a subsection, the result says so. The selection resets when the view changes and drops books that leave the view.
+
+Evidence: `tests/e2e/library-sections.spec.ts` (2 cases). Case 1 covers creation with trimming and focus, a case-insensitive clash message, a subsection, rename, a move to the top level, move choices that exclude the section's own branch, and the resulting trees. Case 2 is A2 through the UI: two books added to a child section and one also to its parent, unique counts, the parent listing each book once, removal from the child leaving the EPUB Unfiled, a parent removal that keeps the PDF listed through the child, the zero-removal explanation, and a cancelled then confirmed branch deletion with the stated counts. After it, all three books are Unfiled; the catalog still has 3 books and has 0 sections and 0 memberships. Mutations fail these cases: offering the section's own branch as a destination, keeping removed books selected, and deleting without confirmation. The M3-02 Tab-order case now includes each book's checkbox. `mise run check`: 178 unit cases; `smoke`: 40 native cases; `smoke-packaged`: 7; `measure` (prebuilt catalog): within budget.
+
+Limits: no drag and drop, no multi-section add in one step, and no keyboard shortcut for selection. Section-tree undo is not provided (spec default).
+
+## Book status, Archive and details in the UI (M3-04)
+
+Implemented and reviewed on 2026-11-04 without dependency or schema changes.
+
+- **Status actions:** the Selected books bar offers Mark Finished, Archive or Unarchive (whichever applies to the selection), and Start Rereading…. Rereading confirms in a modal dialog first, because it clears positions, unarchives, and restarts any open reader at the beginning. Actions run per book through the service's transition table. The result names the count changed and any book that was not changed, with its reason.
+- **Edit details:** for exactly one selected book, a modal dialog edits the title, ordered authors and subjects (one per line). Only changed fields are sent, so only those become manual overrides. Subjects compare as a case-insensitive set, so reordering is not an edit. Service validation (for example "Title cannot be empty.") appears in the dialog, and Cancel sends nothing.
+
+Evidence: `tests/e2e/library-books.spec.ts` (2 cases).
+
+- Case 1 is A4 through the UI with real readers and catalog checks:
+  - Finish, then Archive, keeps Finished.
+  - An archived unread EPUB opened for reference stays Unread and archived.
+  - Unarchive keeps Unread and leaves the Archive view, which lists the most recently archived first.
+  - A Finished, archived PDF opened for reference and turned to page 3 keeps both.
+  - Cancelling Start Rereading changes nothing. Confirming makes the book Currently Reading and unarchived, and its open reader reloads to page 1, with page 1 committed.
+- Case 2: Edit details appears only for one selected book; a blank title is explained; title, authors (blank lines dropped, names trimmed) and subjects (case duplicates removed) are saved with all three manual flags. A subjects-only edit of the other book sets only `subjects_manual`. Cancel saves nothing.
+
+Mutations fail these cases: sending every field on save, and rereading without confirmation. `mise run check`: 178 unit cases; `smoke`: 42 native cases; `smoke-packaged`: 7; `measure` (prebuilt catalog): within budget.
+
+Limits: no per-book details panel beyond the dialog, no undo, and batch actions run sequentially (one commit per book, ~40 ms each on the HDD). Covers are M3-05.
+

@@ -16,14 +16,15 @@ One Electron application service coordinates writes. React views request operati
 
 PDF and EPUB are actual variants, so use format adapters behind a common session contract. Locations remain a discriminated union, not one generic page integer. Expose real capability differences: font resizing versus page zoom, missing outline, unavailable text. Engine objects stay inside adapters. No plugin framework or hypothetical database abstraction is needed.
 
-Suggested organization when coding starts:
+Code organization (as implemented):
 
 ```text
 src/main/       lifecycle, window coordinator, validated messaging
 src/library/    catalog rules, metadata/sections/status, import/recovery
 src/storage/    schema/migrations and managed-file internals
 src/preload/    narrow typed application bridge
-src/ui/         library and reader controls
+src/shared/     types shared by main, preload and renderer (IPC contracts)
+src/renderer/   library window (src/library/) and reader shell/engine UI
 src/readers/    session contract, PDF.js and foliate-js adapters
 tests/          behavior/storage/Electron checks and tiny licensed fixtures
 ```
@@ -56,7 +57,7 @@ Diagnostic fixture readers still use bundled allowlisted fixtures and hold no pr
 - **Sections:** sibling names are unique by key (root siblings included); moves into the branch itself are rejected before the schema trigger. Deletion reports the branch's section, affected-book and newly unfiled counts for confirmation and relies on the schema's cascade.
 - **Status:** `recordSuccessfulOpen` is called only after a reader rendered the book. `startRereading` sets Currently Reading, clears Archive, deletes the current revision's position and advances the session generation in one commit; the coordinator must flush and stop the open session first and restart it with a new grant.
 - **Metadata:** `editMetadata` replaces title, ordered authors or the subject set and marks only the edited fields manual. Covers and extraction precedence arrive with import/metadata work.
-- **IPC:** only `queryBooks` is exposed so far, as `library:books`, to the library window only. The renderer's query is passed through `parseBookQuery` unchanged; no argument means All Books. Section, status and metadata writes have no IPC yet (milestone three).
+- **IPC (M3-01, `src/main/library-ipc.ts`):** every service operation has a `library:*` channel that only the library window may call; any other sender gets a thrown refusal. Arguments go to the service unchanged, so its validation is the boundary. Results are `{ok: true, value}` or `{ok: false, code, message}` with the `LibraryError` code (`failed` for anything else), because Electron's invoke would reduce a thrown error to text. After each successful change, and after a reader's successful open, main sends `library:changed` to the library window, which re-queries. `library:start-rereading` flushes and retires an open reader's session, resets the book, then reloads that reader, which starts a new session at the beginning; the old page's generation is stale. Archive, Unarchive and Finish leave readers open.
 
 ## Data model
 

@@ -21,7 +21,35 @@ contextBridge.exposeInMainWorld("development", development);
 const borges: BorgesApi = {
   library: {
     books: (query) => ipcRenderer.invoke("library:books", query),
+    filterTerms: (query) => ipcRenderer.invoke("library:filter-terms", query),
+    sections: (options) => ipcRenderer.invoke("library:sections", options),
+    createSection: (name, parentId) =>
+      ipcRenderer.invoke("library:create-section", name, parentId),
+    renameSection: (sectionId, name) =>
+      ipcRenderer.invoke("library:rename-section", sectionId, name),
+    moveSection: (sectionId, parentId) =>
+      ipcRenderer.invoke("library:move-section", sectionId, parentId),
+    previewSectionDeletion: (sectionId) =>
+      ipcRenderer.invoke("library:preview-section-deletion", sectionId),
+    deleteSection: (sectionId) =>
+      ipcRenderer.invoke("library:delete-section", sectionId),
+    addToSection: (sectionId, bookIds) =>
+      ipcRenderer.invoke("library:add-to-section", sectionId, bookIds),
+    removeFromSection: (sectionId, bookIds) =>
+      ipcRenderer.invoke("library:remove-from-section", sectionId, bookIds),
+    finish: (bookId) => ipcRenderer.invoke("library:finish", bookId),
+    archive: (bookId) => ipcRenderer.invoke("library:archive", bookId),
+    unarchive: (bookId) => ipcRenderer.invoke("library:unarchive", bookId),
+    startRereading: (bookId) =>
+      ipcRenderer.invoke("library:start-rereading", bookId),
+    editMetadata: (bookId, edit) =>
+      ipcRenderer.invoke("library:edit-metadata", bookId, edit),
     openBook: (bookId) => ipcRenderer.invoke("library:open-book", bookId),
+    onChanged(listener) {
+      const handler = () => listener();
+      ipcRenderer.on("library:changed", handler);
+      return () => ipcRenderer.off("library:changed", handler);
+    },
   },
   reader: {
     openBook: () => ipcRenderer.invoke("reader:open-book"),

@@ -20,10 +20,7 @@ test("built desktop shell loads with sandboxed UI and its locked development cat
     });
     const page = await application.firstWindow();
     await expect(
-      page.getByRole("heading", {
-        name: "Development environment",
-        exact: true,
-      }),
+      page.getByRole("navigation", { name: "Library" }),
     ).toBeVisible();
     await expect(page.getByTestId("sqlite-version")).toHaveText(
       /^\d+\.\d+\.\d+$/,

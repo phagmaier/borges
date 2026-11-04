@@ -1,0 +1,336 @@
+/* Provisional library layout (M3-02); appearance is settled by M3-06. */
+.library {
+  --line: light-dark(#c9cec4, #39433c);
+  --muted: light-dark(#5b665c, #a3ada3);
+  --accent: light-dark(#2f5d46, #8fc7a6);
+  --panel: light-dark(#ecefe7, #1e2621);
+  display: grid;
+  grid-template-columns: minmax(200px, 240px) 1fr;
+  height: 100vh;
+}
+.sidebar {
+  overflow-y: auto;
+  padding: 16px 12px;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+.sidebar .brand {
+  margin: 0 8px 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+}
+.sidebar h2 {
+  margin: 20px 8px 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.sidebar ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sidebar .section-tree .section-tree {
+  padding-left: 14px;
+}
+.sidebar .destinations {
+  margin-top: 4px;
+}
+.sidebar button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+.sidebar button:hover {
+  background: light-dark(#dfe4d9, #28322b);
+}
+.sidebar button[aria-current="page"] {
+  background: light-dark(#d3ddd0, #2f3d33);
+  font-weight: 600;
+}
+.sidebar .count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.quiet {
+  color: var(--muted);
+  margin: 4px 8px;
+}
+.library-main {
+  overflow-y: auto;
+  padding: 20px 28px;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px 20px;
+  margin-bottom: 8px;
+}
+.toolbar h1 {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 1.5rem;
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  flex: 1;
+}
+.filters label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.filters input[type="search"] {
+  min-width: 240px;
+}
+.filters input,
+.filters select {
+  font: inherit;
+  padding: 6px 8px;
+}
+.filters .toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+}
+.layout {
+  display: flex;
+  gap: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.layout button[aria-pressed="true"] {
+  font-weight: 600;
+  background: var(--panel);
+}
+.result-count {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.book-grid {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 20px 16px;
+}
+.book-card {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  font-size: 0.85rem;
+}
+.title-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+}
+.book-card .title-button {
+  display: grid;
+  gap: 8px;
+}
+.book-card .title {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.book-card .authors,
+.book-card .status {
+  color: var(--muted);
+}
+.cover {
+  aspect-ratio: 2 / 3;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+.cover.placeholder {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  background: light-dark(#e3e7dc, #26302a);
+}
+.cover.placeholder.epub {
+  background: light-dark(#e6e1d6, #2e2a24);
+}
+.cover .initials {
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.cover .format {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.book-list {
+  width: 100%;
+  border-collapse: collapse;
+}
+.book-list th,
+.book-list td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  font-weight: normal;
+}
+.book-list thead th {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.book-list .title-button {
+  font-weight: 600;
+}
+.empty {
+  margin: 48px 0;
+  text-align: center;
+}
+.empty p:first-child {
+  font-size: 1.1rem;
+}
+.development {
+  margin-top: 48px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+.development h2 {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.development dl {
+  grid-template-columns: max-content 1fr;
+}
+.library button:focus-visible,
+.library input:focus-visible,
+.library select:focus-visible,
+.library summary:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.more-results {
+  margin: 24px 0;
+  text-align: center;
+}
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  margin: 8px 0;
+}
+.inline-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.inline-form input,
+.inline-form select {
+  font: inherit;
+  padding: 6px 8px;
+}
+.inline-form [role="alert"] {
+  flex-basis: 100%;
+  margin: 0;
+}
+.sidebar .inline-form {
+  margin: 6px 8px;
+}
+.sidebar .inline-form input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.sidebar .new-section {
+  color: var(--muted);
+  margin-top: 4px;
+}
+.section-actions {
+  margin: 8px 0 12px;
+}
+.section-actions .actions {
+  gap: 8px;
+}
+.selection-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.selection-bar p {
+  margin: 0;
+  font-weight: 600;
+}
+.selection-bar select {
+  font: inherit;
+  padding: 6px 8px;
+}
+.book-card .select {
+  justify-self: start;
+  margin: 4px 0 0;
+}
+.notice {
+  color: var(--muted);
+}
+.library dialog {
+  max-width: 28rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: inherit;
+  background: light-dark(#f5f6f1, #171d19);
+}
+.library dialog::backdrop {
+  background: rgb(0 0 0 / 35%);
+}
+.library dialog h2 {
+  margin-top: 0;
+  font-size: 1.1rem;
+}
+.library input[type="checkbox"]:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.metadata-dialog form {
+  display: grid;
+  gap: 12px;
+  min-width: 22rem;
+}
+.metadata-dialog label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.library .metadata-dialog input,
+.library .metadata-dialog textarea {
+  font: inherit;
+  padding: 6px 8px;
+  color: inherit;
+}

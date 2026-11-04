@@ -196,22 +196,43 @@ async function memory(application: ElectronApplication) {
   };
 }
 
+/** The library renderer's own view: JS heap and DOM size. */
+async function libraryRenderer(library: Page) {
+  return library.evaluate(() => {
+    const heap = Reflect.get(performance, "memory") as
+      | { usedJSHeapSize: number; totalJSHeapSize: number }
+      | undefined;
+    return {
+      usedHeapMiB: heap ? Math.round(heap.usedJSHeapSize / 2 ** 17) / 8 : null,
+      totalHeapMiB: heap
+        ? Math.round(heap.totalJSHeapSize / 2 ** 17) / 8
+        : null,
+      domNodes: document.getElementsByTagName("*").length,
+    };
+  });
+}
+
 async function settle() {
   // Let GC/compositor work finish after an action before sampling memory.
   await new Promise((done) => setTimeout(done, 1500));
 }
 
-/** The library window once it lists every live catalog entry. */
+/** Books the library renders before more are requested (`RESULT_BATCH`). */
+const RESULT_BATCH = 100;
+
+/** The library window once it counts every live entry and shows a batch. */
 async function catalogShown(library: Page, expected: number) {
   await expect(library.getByTestId("library-id")).toHaveText(
     /^[0-9a-f-]{36}$/,
     { timeout: 30_000 },
   );
+  await expect(library.locator(".result-count")).toHaveText(
+    `${expected} books`,
+    { timeout: 30_000 },
+  );
   await expect(
-    library
-      .getByRole("region", { name: "Catalog books" })
-      .getByRole("listitem"),
-  ).toHaveCount(expected, { timeout: 30_000 });
+    library.getByRole("list", { name: "Books" }).getByRole("listitem"),
+  ).toHaveCount(Math.min(expected, RESULT_BATCH), { timeout: 30_000 });
 }
 
 function stored(sql: string, ...values: string[]) {
@@ -235,7 +256,8 @@ async function timeQueries(library: Page, repetitions: number) {
         let found = -1;
         for (let i = 0; i < repetitions; i++) {
           const started = performance.now();
-          found = (await window.borges.library.books(query as never)).length;
+          const result = await window.borges.library.books(query as never);
+          found = result.ok ? result.value.length : -1;
           times.push(performance.now() - started);
         }
         return { times, found };
@@ -257,7 +279,10 @@ async function openReader(
   const started = performance.now();
   const [reader] = await Promise.all([
     application.waitForEvent("window"),
-    library.getByRole("button", { name: `Read ${title}`, exact: true }).click(),
+    library
+      .getByRole("list", { name: "Books" })
+      .getByRole("button", { name: title, exact: true })
+      .click(),
   ]);
   const ui = reader.frameLocator('iframe[title="Book content"]');
   await expect(ui.getByRole("status")).toHaveText("Ready", { timeout: 30_000 });
@@ -532,8 +557,15 @@ test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, 
     const queriesIdle = await timeQueries(library, 20);
     await settle();
     const idle = await memory(application);
+    const libraryIdle = await libraryRenderer(library);
     // No book is rendered in the background: the library is the only page.
     expect(idle.processes.filter((p) => p.type === "Tab")).toHaveLength(1);
+
+    // Find the two books by searching, as in any library of this size.
+    await library.getByRole("searchbox").fill("Representative");
+    await expect(
+      library.getByRole("list", { name: "Books" }).getByRole("listitem"),
+    ).toHaveCount(2);
 
     const first = await openReader(application, library, LARGE_PDF, pdfOpening);
     const second = await openReader(
@@ -642,6 +674,7 @@ test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, 
     ).toEqual([{ page: pdf.rareLocation }]);
     await settle();
     const closed = await memory(application);
+    const libraryClosed = await libraryRenderer(library);
 
     // Repeated open/close cycles: warm resumed opens and growth after disposal.
     const warm = { pdf: [] as number[], epub: [] as number[] };
@@ -678,15 +711,37 @@ test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, 
     }
     await settle();
     const cycled = await memory(application);
+    const libraryCycled = await libraryRenderer(library);
     const windows = await application.evaluate(
       ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
     );
     expect(windows).toBe(1);
+
+    // Browse the whole catalog after the reader measurements, so this
+    // reclaimable rendering cache is not charged to reader disposal: clear
+    // the search, then request every batch until all are listed.
+    await library.getByRole("searchbox").fill("");
+    await expect(library.locator(".result-count")).toHaveText(`${live} books`);
+    const browseStarted = performance.now();
+    const more = library.getByRole("button", { name: /^Show more books/ });
+    while (await more.isVisible()) await more.click();
+    await expect(
+      library.getByRole("list", { name: "Books" }).getByRole("listitem"),
+    ).toHaveCount(live);
+    const browseMs = performance.now() - browseStarted;
+    await settle();
+    const browsed = await memory(application);
+    const libraryBrowsed = await libraryRenderer(library);
+
     // Exactly the two opened books' files were read (A13: no eager loading);
     // this also shows that the access-time check detects reads.
     const read = await readSince(libraryRoot);
     expect(read).toEqual([pdfEntry.path, epubEntry.path].sort());
 
+    report.libraryBrowseMs = {
+      allBatches: round(browseMs),
+      note: `Showing all ${live} entries in batches of ${RESULT_BATCH} by pressing Show more.`,
+    };
     report.catalogQueriesMs = {
       libraryIdle: queriesIdle,
       twoReadersOpen: queriesReading,
@@ -718,10 +773,17 @@ test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, 
     };
     report.memory = {
       libraryIdle: idle,
+      libraryRenderer: {
+        idle: libraryIdle,
+        allEntriesShown: libraryBrowsed,
+        afterClosingReaders: libraryClosed,
+        afterOpenCloseCycles: libraryCycled,
+      },
       twoReadersOpened: opened,
       twoReadersAfterSearch: searched,
       afterClosingReaders: closed,
       afterOpenCloseCycles: cycled,
+      libraryAllEntriesShown: browsed,
       cycleSeries: series,
     };
     for (const [name, results] of Object.entries({

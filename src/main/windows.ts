@@ -2,6 +2,7 @@ import {
   BrowserWindow,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type WebContents,
 } from "electron";
 import {
   type DevelopmentWindow,
@@ -66,6 +67,21 @@ export class WindowCoordinator {
       kind: "reader",
       book: { id: book.id, title: book.title, source: "catalog" },
     });
+  }
+
+  /** The open reader window's contents for a catalog book, if any. */
+  catalogReader(bookId: string): WebContents | undefined {
+    return this.contentsOf(`catalog:${bookId}`);
+  }
+
+  /** The open library window's contents, if any. */
+  library(): WebContents | undefined {
+    return this.contentsOf("library");
+  }
+
+  private contentsOf(key: string): WebContents | undefined {
+    const window = this.entries.get(key)?.window;
+    return window && !window.isDestroyed() ? window.webContents : undefined;
   }
 
   private isShellUrl(destination: string): boolean {

@@ -1,5 +1,13 @@
+import type { MetadataEdit } from "../library/books";
 import type { StoredSizing } from "../library/progress";
-import type { BookQuery, BookSummary } from "../library/query";
+import type {
+  BookQuery,
+  BookSummary,
+  FilterTerm,
+  SectionNode,
+} from "../library/query";
+import type { LibraryErrorCode } from "../library/rules";
+import type { SectionDeletion } from "../library/sections";
 import type { ProgressResult } from "../main/sessions";
 import type { ReaderLocation, ReaderSizing } from "../readers/session";
 import type { DevelopmentWindow } from "./windows";
@@ -42,7 +50,23 @@ export interface DevelopmentApi {
   quit(): Promise<void>;
 }
 
-export type { BookQuery, BookSummary } from "../library/query";
+export type { MetadataEdit } from "../library/books";
+export type {
+  BookQuery,
+  BookSummary,
+  FilterTerm,
+  LibraryView,
+  SectionNode,
+} from "../library/query";
+export type { SectionDeletion } from "../library/sections";
+
+/**
+ * Outcome of a library request. Service errors keep their code (Electron's
+ * invoke would reduce a thrown error to text); `failed` is anything else.
+ */
+export type LibraryResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; code: LibraryErrorCode | "failed"; message: string };
 export type { ProgressResult } from "../main/sessions";
 
 /** What a catalog reader window receives for its assigned book. */
@@ -69,11 +93,55 @@ export interface ProgressReport {
 
 /** Application bridge for trusted UI. Main validates every sender and value. */
 export interface BorgesApi {
+  /** Library-window requests; main refuses every other sender. */
   library: {
-    /** Books matching a query, All Books by default (diagnostic list and
-     * measurements; the library UI is milestone 3). */
-    books(query?: BookQuery): Promise<BookSummary[]>;
-    openBook(bookId: string): Promise<void>;
+    /** Books matching a query, All Books by default. */
+    books(query?: BookQuery): Promise<LibraryResult<BookSummary[]>>;
+    filterTerms(
+      query: BookQuery,
+    ): Promise<
+      LibraryResult<{ authors: FilterTerm[]; subjects: FilterTerm[] }>
+    >;
+    sections(options?: {
+      includeArchived?: boolean;
+    }): Promise<LibraryResult<SectionNode[]>>;
+    createSection(
+      name: string,
+      parentId: string | null,
+    ): Promise<LibraryResult<{ id: string; name: string }>>;
+    renameSection(
+      sectionId: string,
+      name: string,
+    ): Promise<LibraryResult<{ id: string; name: string }>>;
+    moveSection(
+      sectionId: string,
+      parentId: string | null,
+    ): Promise<LibraryResult<null>>;
+    previewSectionDeletion(
+      sectionId: string,
+    ): Promise<LibraryResult<SectionDeletion>>;
+    deleteSection(sectionId: string): Promise<LibraryResult<SectionDeletion>>;
+    addToSection(
+      sectionId: string,
+      bookIds: string[],
+    ): Promise<LibraryResult<{ added: number }>>;
+    removeFromSection(
+      sectionId: string,
+      bookIds: string[],
+    ): Promise<LibraryResult<{ removed: number }>>;
+    finish(bookId: string): Promise<LibraryResult<BookSummary>>;
+    archive(bookId: string): Promise<LibraryResult<BookSummary>>;
+    unarchive(bookId: string): Promise<LibraryResult<BookSummary>>;
+    /** Resets the position; an open reader is flushed and restarted. */
+    startRereading(bookId: string): Promise<LibraryResult<BookSummary>>;
+    editMetadata(
+      bookId: string,
+      edit: MetadataEdit,
+    ): Promise<LibraryResult<BookSummary>>;
+    /** Open or focus the book's reader window. */
+    openBook(bookId: string): Promise<LibraryResult<null>>;
+    /** Called after any catalog change, including a reader's open. */
+    onChanged(listener: () => void): () => void;
   };
   reader: {
     /** Start this window's session for its assigned catalog book. */

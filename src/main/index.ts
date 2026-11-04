@@ -11,7 +11,7 @@ import {
   session,
   webContents,
 } from "electron";
-import { getBook, queryBooks } from "../library/query";
+import { getBook } from "../library/query";
 import {
   type ReconciliationReport,
   reconcileOperations,
@@ -23,6 +23,7 @@ import {
   resolveLibraryRoot,
 } from "../storage/paths";
 import { resolveServedAsset } from "./assets";
+import { registerLibraryIpc } from "./library-ipc";
 import { ReaderSessions } from "./sessions";
 import { WindowCoordinator } from "./windows";
 
@@ -292,17 +293,11 @@ if (!app.requestSingleInstanceLock()) {
         !app.isPackaged && interval > 0 ? { delayMs: interval } : {},
       );
       sessions = readers;
-      ipcMain.handle("library:books", (event, query: unknown) => {
-        if (windows.identityFor(event).kind !== "library")
-          throw new Error("Only the library window may list books.");
-        // The query is untrusted; `queryBooks` rebuilds and validates it.
-        return queryBooks(opened.database, query ?? { view: { kind: "all" } });
-      });
-      ipcMain.handle("library:open-book", async (event, bookId: unknown) => {
-        if (windows.identityFor(event).kind !== "library")
-          throw new Error("Readers must be opened from the library.");
-        const book = getBook(opened.database, bookId as string);
-        await windows.openCatalogReader(book);
+      const libraryRequests = registerLibraryIpc({
+        ipcMain,
+        database: opened.database,
+        windows,
+        readers,
       });
       ipcMain.handle("reader:open-book", (event) =>
         openAssignedBook(opened, readers, event),
@@ -323,6 +318,7 @@ if (!app.requestSingleInstanceLock()) {
         (event, bookId: unknown, generation: unknown) => {
           assignedCatalogBook(event);
           readers.opened(event.sender.id, bookId, generation);
+          libraryRequests.changed(); // An unread book may now be Currently Reading.
         },
       );
       ipcMain.handle("development:quit", (event) => {

@@ -65,10 +65,7 @@ test("reader shells are unique per book and outlive the library", async ({
   await epub.getByRole("button", { name: "Open library", exact: true }).click();
   const reopened = await libraryReopened;
   await expect(
-    reopened.getByRole("heading", {
-      name: "Development environment",
-      exact: true,
-    }),
+    reopened.getByRole("navigation", { name: "Library" }),
   ).toBeVisible();
   await pdf.evaluate(async () => {
     await window.development.openLibrary();
@@ -114,10 +111,7 @@ test("a second launch reopens the existing instance's library", async ({
     ]);
     expect(code).toBe(0);
     await expect(
-      page.getByRole("heading", {
-        name: "Development environment",
-        exact: true,
-      }),
+      page.getByRole("navigation", { name: "Library" }),
     ).toBeVisible();
     expect(application.windows()).toHaveLength(2);
   } finally {
