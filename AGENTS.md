@@ -2,7 +2,7 @@
 
 ## Purpose and current state
 
-Build a personal, fully offline PDF/EPUB library manager and integrated reader for Arch Linux. Requirements discovery is complete. Pinned tooling/dependencies, a multi-window diagnostic Electron shell, and startup/SQLite checks now exist. M1-02 remains verification-pending because the current Hyprland policy denies existing-window focus; see the implementation plan and development evidence. M1-03 initial fixture rendering, M1-04 reader interactions/explicit snapshot restoration, M1-05 diagnostic adversarial isolation, and M1-06 packaged-runtime SQLite/schema diagnostics are verified; catalog-backed stale-session checks, central autosave, library features, and the rest of milestone one remain pending; do not repeat the settled interview.
+Build a personal, fully offline PDF/EPUB library manager and integrated reader for Arch Linux. Requirements discovery is complete. Pinned tooling/dependencies, a multi-window diagnostic Electron shell, and startup/SQLite checks now exist. M1-02 remains verification-pending because the current Hyprland policy denies existing-window focus; see the implementation plan and development evidence. M1-03 initial fixture rendering, M1-04 reader interactions/explicit snapshot restoration, M1-05 diagnostic adversarial isolation, M1-06 packaged-runtime SQLite/schema diagnostics, and M1-07 diagnostic packaged measurements/budgets are verified; catalog/500-entry measurements, catalog-backed stale-session checks, central autosave, library features, and the rest of milestone one remain pending; do not repeat the settled interview.
 
 Borges is the project name. Another user/OS, public distribution, and Calibre compatibility must not drive the first version.
 
@@ -37,7 +37,8 @@ Continue the bounded desktop/reader/SQLite spike in the handoff from the verifie
 - `mise run dev`: hot-reloading diagnostic shell; `mise exec -- pnpm dev --watch` also watches main/preload.
 - `mise run check`: strict TypeScript, Biome lint/format, unit tests, production build.
 - `mise run smoke`: build plus actual Electron startup/SQLite smoke on an available display.
-- `mise run smoke-packaged`: bundle Electron and test a relocated diagnostic artifact, SQLite restarts and schema refusal. Run native GUI suites serially.
+- `mise run smoke-packaged`: bundle Electron and test a relocated diagnostic artifact, SQLite restarts and schema refusal.
+- `mise run measure`: bundle Electron and record launch/reader/search/memory/disposal measurements against machine-specific budgets. Run native GUI suites serially.
 - Use `mise exec -- pnpm …` for individual scripts if the shell hook is inactive. Development Node is 26; Electron embeds Node 24, so application Node types target 24. Built-in `node:sqlite` is verified; no separate driver is needed for the current baseline.
 
 For pinned pnpm 12, `pnpm-workspace.yaml` uses the supported `allowBuilds` successor to the shared instructions' legacy `onlyBuiltDependencies`. Keep the same named-package restriction; only Electron is currently allowed. Preserve the strict 1440-minute release gate without global bypass. Do not run the upstream development install inside the foliate-js submodule.

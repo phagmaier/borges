@@ -22,3 +22,6 @@ run = "pnpm test:e2e"
 description = "Bundle Electron and verify relocated runtime SQLite (display required)"
 run = "pnpm test:packaged"
 
+[tasks.measure]
+description = "Bundle Electron and record packaged launch/reader/memory measurements (display required)"
+run = "pnpm measure:runtime"

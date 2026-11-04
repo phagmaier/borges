@@ -101,7 +101,7 @@ library/
 
 Trash is catalog state; it need not physically move every file. SQLite sidecars belong with the catalog. Back up the whole root while all application windows are closed, and prove a copied root works without the original path. Default root follows the [XDG base-directory convention](https://specifications.freedesktop.org/basedir/latest/). External runtime caches/logs are disposable.
 
-Render current pages and bounded adjacent resources for open books only. Dispose workers/documents/object URLs/image buffers/listeners on close. Generate thumbnails lazily with bounded concurrency/cache; browsing 500 entries must not instantiate 500 readers. Make long searches cancellable and incremental. Calibrate numeric resource budgets from the Arch spike.
+Render current pages and bounded adjacent resources for open books only. Dispose workers/documents/object URLs/image buffers/listeners on close. Generate thumbnails lazily with bounded concurrency/cache; browsing 500 entries must not instantiate 500 readers. Make long searches cancellable and incremental. Diagnostic packaged budgets are recorded in [M1-07 evidence](development.md#packaged-runtimeresource-measurements-m1-07); catalog/500-entry budgets follow the milestone-two catalog. M1-07 also observed that all readers' `borges://reader` content frames share one renderer process. Book content still has no host bridge, but one book's renderer crash or memory growth reaches other readers. Milestone five should decide from crash-containment evidence whether each reader needs a distinct content origin.
 
 ## Remaining technical checks
 
