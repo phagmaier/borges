@@ -1,5 +1,5 @@
 import type { StoredSizing } from "../library/progress";
-import type { BookSummary } from "../library/query";
+import type { BookQuery, BookSummary } from "../library/query";
 import type { ProgressResult } from "../main/sessions";
 import type { ReaderLocation, ReaderSizing } from "../readers/session";
 import type { DevelopmentWindow } from "./windows";
@@ -42,7 +42,7 @@ export interface DevelopmentApi {
   quit(): Promise<void>;
 }
 
-export type { BookSummary } from "../library/query";
+export type { BookQuery, BookSummary } from "../library/query";
 export type { ProgressResult } from "../main/sessions";
 
 /** What a catalog reader window receives for its assigned book. */
@@ -70,8 +70,9 @@ export interface ProgressReport {
 /** Application bridge for trusted UI. Main validates every sender and value. */
 export interface BorgesApi {
   library: {
-    /** All Books, for the diagnostic list (the library UI is milestone 3). */
-    books(): Promise<BookSummary[]>;
+    /** Books matching a query, All Books by default (diagnostic list and
+     * measurements; the library UI is milestone 3). */
+    books(query?: BookQuery): Promise<BookSummary[]>;
     openBook(bookId: string): Promise<void>;
   };
   reader: {

@@ -178,6 +178,39 @@ test("catalog readers save positions centrally and resume after reopening and re
   }
 });
 
+test("the library window queries the catalog; malformed queries and readers are refused", async ({
+  application,
+}) => {
+  const library = await application.firstWindow();
+  const query = (page: Page, input: unknown) =>
+    page.evaluate(
+      (value) =>
+        window.borges.library.books(value as never).then(
+          (books) => books.map((book) => book.title),
+          (error: unknown) => `rejected: ${String(error)}`,
+        ),
+      input,
+    );
+  expect(await query(library, undefined)).toEqual([
+    "Known PDF",
+    "Reflowable EPUB",
+  ]);
+  expect(
+    await query(library, { view: { kind: "all" }, text: "  REFLOWABLE " }),
+  ).toEqual(["Reflowable EPUB"]);
+  expect(await query(library, { view: { kind: "archive" } })).toEqual([]);
+  expect(await query(library, { view: { kind: "everything" } })).toContain(
+    "Unknown library view.",
+  );
+  expect(await query(library, { view: { kind: "all" }, text: 7 })).toContain(
+    "Search text must be short text.",
+  );
+  const { reader } = await openCatalogReader(application, "Known PDF");
+  expect(await query(reader, undefined)).toContain(
+    "Only the library window may list books.",
+  );
+});
+
 test.describe("flushing", () => {
   // Commits would otherwise wait 10 s, so a saved position proves the flush.
   test.use({ environment: { BORGES_SAVE_INTERVAL_MS: "10000" } });

@@ -1,6 +1,6 @@
 # Development setup
 
-The development environment is installed on the user's Arch Linux/Hyprland desktop. The diagnostic Electron shell opens one library and named readers with bundled known PDF/EPUB fixtures. Engine navigation/search/sizing, explicit snapshot restoration, diagnostic adversarial isolation, packaged-runtime SQLite/schema handling, and diagnostic packaged resource measurements are verified; catalog-backed session checks, autosave, catalog/500-entry measurements, and the rest of the integration spike remain pending. It does not open/change user book files and uses a separate `borges-development` Electron profile. Its versioned, locked library catalog lives in `<profile>/library` for unpackaged builds; see [M2-01](#catalog-schema-migrations-and-root-lock-m2-01). Reopening an existing reader requests activation; this Hyprland policy answers with an urgency hint rather than focus, a recorded platform limit; see [M1-02 evidence](#multi-window-spike-m1-02).
+The development environment is installed on the user's Arch Linux/Hyprland desktop. The diagnostic Electron shell opens one library and named readers with bundled known PDF/EPUB fixtures. Engine navigation/search/sizing, explicit snapshot restoration, diagnostic adversarial isolation, packaged-runtime SQLite/schema handling, catalog readers with central autosave, and packaged resource measurements with a 500-entry catalog (A13) are verified; the library UI and later milestones remain pending. It does not open/change user book files and uses a separate `borges-development` Electron profile. Its versioned, locked library catalog lives in `<profile>/library` for unpackaged builds; see [M2-01](#catalog-schema-migrations-and-root-lock-m2-01). Reopening an existing reader requests activation; this Hyprland policy answers with an urgency hint rather than focus, a recorded platform limit; see [M1-02 evidence](#multi-window-spike-m1-02).
 
 ## Start working
 
@@ -21,7 +21,7 @@ mise run smoke-packaged
 mise run measure
 ```
 
-`check` runs TypeScript, Biome lint/format checks, Vitest, and the production build. `smoke` builds and launches real Electron on the available desktop display. Playwright uses the installed Electron executable; no separate Playwright Chromium download is needed. Headless CI display setup is future work and is not needed on this desktop. `smoke-packaged` separately builds a bundled Electron directory and tests a relocated copy. `measure` builds that directory and records launch, reader, search, memory and disposal measurements against budgets; see [M1-07](#packaged-runtimeresource-measurements-m1-07). Run the native suites serially on this desktop; concurrent GUI runs can interfere with input/focus and have exhibited reader-opening timeouts.
+`check` runs TypeScript, Biome lint/format checks, Vitest, and the production build. `smoke` builds and launches real Electron on the available desktop display. Playwright uses the installed Electron executable; no separate Playwright Chromium download is needed. Headless CI display setup is future work and is not needed on this desktop. `smoke-packaged` separately builds a bundled Electron directory and tests a relocated copy. `measure` builds that directory, seeds a representative 500-entry catalog (about 2.5 minutes on the HDD), and records launch, catalog query, reader, save, search, memory and disposal measurements against budgets; see [A13](#a13-500-entry-catalog-measurements) and [M1-07](#packaged-runtimeresource-measurements-m1-07). Run the native suites serially on this desktop; concurrent GUI runs can interfere with input/focus and have exhibited reader-opening timeouts.
 
 Other commands, using `mise exec -- pnpm …` if the shell's mise hook is inactive:
 
@@ -179,6 +179,8 @@ Review covered the new database module, startup/diagnostic wiring, packaging scr
 
 ## Packaged runtime/resource measurements (M1-07)
 
+*Superseded in part by the [A13 measurements](#a13-500-entry-catalog-measurements): the suite now opens these documents as catalog entries in a 500-entry library instead of substituting fixture bytes. The observations below remain the diagnostic-fixture baseline.*
+
 Implemented and reviewed on 2026-11-03 with no dependency or product-code changes. `mise run measure` packages the diagnostic artifact, copies it to `dist/measure-*` on the home filesystem (not tmpfs), replaces the two allowlisted fixture files *in that copy* with generated book-length documents, runs two serial native suites, writes `dist/measurements/latest.json` (path overridable with `BORGES_MEASURE_REPORT`), and deletes the copy. The application gains no file loader. `mise run check` still passes with 44 unit cases. The measurement suite is separate from `smoke` because its timing budgets are machine-specific.
 
 Session: Intel Core i5-9400 (6 cores, `powersave` governor, 4.1 GHz max), 11.5 GiB RAM, Intel UHD Graphics 630 with GPU compositing/OpenGL/rasterization enabled, Arch kernel 7.2.14, Hyprland 0.57.0 Wayland session (Electron's default backend selection; not separately verified), one 1920×1080 display at scale 1. `/home` is btrfs on a 7200 rpm WD10EZEX hard disk, and `/tmp` is tmpfs. Electron is 45.2.1 (Node 24.22.1).
@@ -203,7 +205,7 @@ Results from eight full runs, including a 20-cycle exploratory run and the delib
 | PSS after closing readers, above idle | 14–17 MiB | ≤ 60 MiB |
 | PSS growth over 5 two-reader open/close cycles | 24–29 MiB | ≤ 100 MiB |
 
-Budgets are about 2–3× the worst observation and use soft assertions, so every violation is reported. A deliberately impossible turn budget made the suite fail as expected; the budget was then restored. The suite covers generated diagnostic books on this one machine. It is **not A13**: catalog search and the 500-entry catalog need milestone two's catalog and must be measured then. The budgets should be recalibrated from evidence, never loosened to get a pass.
+Budgets are about 2–3× the worst observation and use soft assertions, so every violation is reported. A deliberately impossible turn budget made the suite fail as expected; the budget was then restored. The suite covers generated diagnostic books on this one machine. It is **not A13**; the catalog measurement is recorded in [A13](#a13-500-entry-catalog-measurements). The budgets should be recalibrated from evidence, never loosened to get a pass.
 
 Memory is the sum of kernel PSS (`/proc/<pid>/smaps_rollup`) over Electron's `getAppMetrics()` processes. RSS is also recorded but double-counts shared pages. Findings:
 
@@ -318,4 +320,48 @@ Evidence (real catalogs, real Electron windows, real reader engines):
 - `mise run smoke-packaged`: 7 cases. The new case opens a catalog PDF in the relocated packaged runtime, ignores `BORGES_SAVE_INTERVAL_MS=600000` (page 2 committed within 2 s), resumes on page 2 after a restart, and leaves the source bytes unchanged. `mise run measure`: 2 cases within budget.
 - The known `net.fetch`/Playwright flake (M2-03 notes) failed one isolation case in one of three full `mise run smoke` runs; the other two runs passed 30/30.
 
-Limits: no A13 measurement with a 500-entry catalog and open catalog readers yet (next). A position becomes durable only after it reaches main, a few milliseconds after the engine finishes drawing the page, and is committed at most 250 ms later or on close/Quit; a renderer or process crash loses at most that interval. The engine is handed its bytes through two copies (IPC, then a transferred copy). Reader error actions (retry/replace/back to library) and the reread/replace/delete flows that will end sessions through `ReaderSessions` are later work. Book bytes are read whole into memory, as before.
+Limits: the A13 measurement is recorded [separately](#a13-500-entry-catalog-measurements). A position becomes durable only after it reaches main, a few milliseconds after the engine finishes drawing the page, and is committed at most 250 ms later or on close/Quit; a renderer or process crash loses at most that interval. The engine is handed its bytes through two copies (IPC, then a transferred copy). Reader error actions (retry/replace/back to library) and the reread/replace/delete flows that will end sessions through `ReaderSessions` are later work. Book bytes are read whole into memory, as before.
+
+## A13 500-entry catalog measurements
+
+Implemented and reviewed on 2026-11-03 without dependency or schema changes. `mise run measure` now seeds a representative 500-entry library on the home HDD and measures the packaged, relocated artifact against it. The two book-length documents from M1-07 are opened as **catalog entries** through the library window, with central progress saves, instead of substituting fixture bytes. The only product change is that `library:books` accepts an optional library query (validated by `parseBookQuery`; library window only), so catalog search can be timed through real IPC. Session: the M1-07 machine and display (i5-9400, 11.5 GiB, UHD 630 with GPU compositing, kernel 7.2.14, Hyprland Wayland, one 1920×1080 display at scale 1, `/home` btrfs `relatime` on the 7200 rpm HDD). Electron 45.2.1, Chromium 156, Node 24.22.1.
+
+Catalog (`tests/measure/catalog.ts`, deterministic and created): the plan is built through the real `addFileAsNewBook`, `editMetadata`, section and archive services. It has 299 PDFs and 201 EPUBs, 86 MB of distinct generated files from 6.9 KB to 2.3 MB (4–63-page PDFs and 2–15-chapter EPUBs with images, plus the 400-page PDF and 40-chapter EPUB), 120 authors (1–2 per book), 40 subjects (2–3 per book), 60 sections three levels deep (one or two memberships per book, 50 unfiled), and 71 archived books, leaving 429 in All Books. Seeding takes 151–157 s, almost all of it ~2,600 synchronous `synchronous = FULL` commits. Expected query counts come from the plan's construction, not from the query code. Poppler `pdfinfo`/`pdftotext` and `unzip -t` independently confirmed sampled filler books (page counts from the plan formula, opening headings, intact archives).
+
+**No eager loading** is checked with kernel access times. Every managed file's atime is backdated, keeping its mtime, so `relatime` advances it on the next read. After the 8 catalog launches (including cache-evicted ones), no book file had been read. After the reader test (two opens, five resumed reopen cycles, library queries), exactly the two opened books' files had been read. This is also the positive control. A deliberate mutation that reads every revision at startup failed the check, reporting all 500 files. No thumbnail or cover jobs exist yet (covers arrive in milestone four). The library idles with exactly one page renderer, and only the two opened books changed status or gained a position.
+
+Results from five full runs (seeded each time), with every budget met; the last is the recorded report. Times include Playwright's launch/CDP and polling overhead:
+
+| Measure | Observed | Budget |
+| --- | --- | --- |
+| First launch, fresh profile, empty library | 3.5–3.6 s | ≤ 8 s |
+| Warm launch, empty library, median of 3 (comparison) | 0.59–0.66 s | — |
+| Warm launch to all 429 entries listed, median of 5 | 0.62–0.66 s (max 0.85 s) | ≤ 1.5 s |
+| Launch with artifact/profile/library evicted from page cache, max of 3 | 3.1–3.4 s | ≤ 7 s |
+| Catalog query IPC round trip, median (All Books / searches and filters / Unfiled, Archive) | 5.3–6.3 / 3.0–4.3 / 1.0–1.4 ms | — |
+| Catalog query p95, idle / two readers open | ≤ 6.8 ms / ≤ 23.8 ms | ≤ 50 ms |
+| Catalog reader open to opening text, PDF / EPUB | 0.66–0.71 s / 0.63–0.67 s | ≤ 1.5 s |
+| Resumed reopen at the saved page/chapter, max of 5 | 0.56–0.69 s | ≤ 1.5 s |
+| Page turn p95, PDF / EPUB (20 turns) | 87–118 ms / 118–125 ms | ≤ 300 ms |
+| Turn to acknowledged committed position, PDF / EPUB, max of 5 | 390–401 ms / 336–344 ms | ≤ 1 s (spec target) |
+| First search hit | ≤ 67 ms | ≤ 250 ms |
+| Full PDF search, common / rare | 1.38–1.41 s / 0.85–0.88 s | ≤ 3.5 s |
+| Full EPUB search, common / rare | 0.23–0.41 s / 0.11–0.12 s | ≤ 1 s |
+| Closed reader renderer exits | ≤ 181 ms | ≤ 1 s |
+| Total PSS: library idle with 429 listed entries | 280–283 MiB | ≤ 400 MiB |
+| Total PSS: two readers after both searches | 548–557 MiB (430–435 MiB before search) | ≤ 800 MiB |
+| PSS after closing readers, above idle | 30–34 MiB | ≤ 60 MiB |
+| PSS growth over 5 resumed open/close cycles | 5–14 MiB | ≤ 100 MiB |
+
+Budget changes: the evicted-launch budget rose from 6 s to 7 s (2× the worst observation), because eviction now also covers the catalog and its 86 MB of books. The query budget is new; the acknowledgement budget is the spec's one-second persistence target, not an invented guarantee. The other budgets are unchanged and still have at least 1.4× headroom. A deliberately impossible query budget made the suite fail with every violation reported, and was then restored.
+
+Findings:
+
+- **500 entries cost little at launch.** Warm launch with the listed catalog matches the empty library within noise. The evicted launch is about 0.2–0.5 s slower than M1-07's, which fits reading the evicted catalog. The library renderer holds about 83 MiB with the diagnostic 429-row list, so idle PSS is about 40 MiB above the empty library (238–242 MiB in M1-07).
+- **Catalog queries are interactive.** Every query is under 7 ms p95 through IPC while idle. With two readers open, each run had one All Books outlier of 11–24 ms. The cause was not established; a synchronous ~40 ms progress commit or a GC pause on the main thread are plausible.
+- **Saves land well inside one second.** A turn reaches a committed, acknowledged position in about 330–400 ms: the 250 ms coalescing interval plus the HDD commit and drawing.
+- **Catalog readers behave like the M1-07 diagnostic readers.** Both content frames still share one renderer process, which peaks at about 195 MiB after the searches. Opening takes about 0.1–0.4 s longer than serving fixtures did, which fits the extra IPC copy of the bytes and session grant. Closing readers leaves 30–34 MiB above idle (M1-07: 14–17 MiB). The open/close cycles bring it back to within ±4 MiB of idle, consistent with M1-07's reclaimable main-process growth; long sessions beyond 5 cycles were not rerun.
+
+`BORGES_MEASURE_CATALOG=<closed library root built from this plan>` copies a prebuilt library instead of seeding. It is for iterating on the suite only, and the report marks such runs. Recorded results above always seeded.
+
+Limits: one machine, display and scale; partial cold cache, as in M1-07. The library list is the diagnostic shell, not milestone three's grid, so list rendering and cover/thumbnail costs must be measured again with that UI (no thumbnail jobs exist to bound yet). Section views and filter-term listing have no IPC yet; their service timings are in [M2-04](#library-querysearch-service-m2-04). Catalog seeding needs about 2.5 minutes on this HDD, which makes `measure` take about 4 minutes.

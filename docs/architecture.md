@@ -56,6 +56,7 @@ Diagnostic fixture readers still use bundled allowlisted fixtures and hold no pr
 - **Sections:** sibling names are unique by key (root siblings included); moves into the branch itself are rejected before the schema trigger. Deletion reports the branch's section, affected-book and newly unfiled counts for confirmation and relies on the schema's cascade.
 - **Status:** `recordSuccessfulOpen` is called only after a reader rendered the book. `startRereading` sets Currently Reading, clears Archive, deletes the current revision's position and advances the session generation in one commit; the coordinator must flush and stop the open session first and restart it with a new grant.
 - **Metadata:** `editMetadata` replaces title, ordered authors or the subject set and marks only the edited fields manual. Covers and extraction precedence arrive with import/metadata work.
+- **IPC:** only `queryBooks` is exposed so far, as `library:books`, to the library window only. The renderer's query is passed through `parseBookQuery` unchanged; no argument means All Books. Section, status and metadata writes have no IPC yet (milestone three).
 
 ## Data model
 

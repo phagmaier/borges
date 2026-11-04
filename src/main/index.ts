@@ -292,10 +292,11 @@ if (!app.requestSingleInstanceLock()) {
         !app.isPackaged && interval > 0 ? { delayMs: interval } : {},
       );
       sessions = readers;
-      ipcMain.handle("library:books", (event) => {
+      ipcMain.handle("library:books", (event, query: unknown) => {
         if (windows.identityFor(event).kind !== "library")
           throw new Error("Only the library window may list books.");
-        return queryBooks(opened.database, { view: { kind: "all" } });
+        // The query is untrusted; `queryBooks` rebuilds and validates it.
+        return queryBooks(opened.database, query ?? { view: { kind: "all" } });
       });
       ipcMain.handle("library:open-book", async (event, bookId: unknown) => {
         if (windows.identityFor(event).kind !== "library")

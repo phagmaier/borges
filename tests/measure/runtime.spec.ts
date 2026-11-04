@@ -11,6 +11,7 @@ import {
 import { cpus, release, totalmem } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { DatabaseSync } from "node:sqlite";
 import {
   type ElectronApplication,
   _electron as electron,
@@ -19,6 +20,19 @@ import {
   type Page,
   test,
 } from "@playwright/test";
+import {
+  buildCatalog,
+  CATALOG_SIZE,
+  type CatalogEntry,
+  catalogEntries,
+  LARGE_EPUB,
+  LARGE_PDF,
+  plan,
+  queries,
+  readSince,
+  resetAccessTimes,
+  SECTIONS,
+} from "./catalog";
 import {
   COMMON_WORD,
   EPUB_OPENING,
@@ -29,26 +43,32 @@ import {
   representativePdf,
 } from "./representative";
 
-// Diagnostic measurements of the relocated packaged artifact with generated
-// book-length documents. They calibrate budgets; they are not A13 (which
-// needs the milestone-two 500-entry catalog).
+// Packaged-artifact measurements on this Arch desktop (A13): a representative
+// 500-entry catalog on the home disk, with two of its book-length entries open
+// in catalog readers. The catalog plan (tests/measure/catalog.ts) and the
+// document generator supply every expected count.
 const report: Record<string, unknown> = {};
 let root: string;
 let executablePath: string;
+let libraryRoot: string;
+let entries: Map<string, CatalogEntry>;
 let pdf: RepresentativeDocument;
 let epub: RepresentativeDocument;
+const live = plan.filter((book) => !book.archived).length;
 
-// Budgets come from the recorded runs on the Arch desktop in
-// docs/development.md (M1-07): roughly 2–3× the worst observation, so ordinary noise
+// Budgets come from the recorded runs in docs/development.md (M1-07, then the
+// A13 catalog runs): roughly 2–3× the worst observation, so ordinary noise
 // passes while a real regression (eager loading, a leaked renderer, blocking
-// search) fails. Recalibrate from new evidence; do not loosen to get a pass.
-// They cover generated diagnostic books, not the A13 500-entry catalog.
+// search) fails. The position acknowledgement budget is the spec's one-second
+// persistence target. Recalibrate from new evidence; never loosen for a pass.
 const budgets = {
-  warmLaunchMedianMs: 1500,
-  evictedLaunchMaxMs: 6000,
   firstRunLaunchMs: 8000,
+  catalogWarmLaunchMedianMs: 1500,
+  catalogEvictedLaunchMaxMs: 7000,
+  catalogQueryP95Ms: 50,
   readerOpenMaxMs: 1500,
   pageTurnP95Ms: 300,
+  positionAcknowledgedMaxMs: 1000,
   firstSearchHitMs: 250,
   pdfFullSearchMs: 3500,
   epubFullSearchMs: 1000,
@@ -60,6 +80,7 @@ const budgets = {
 };
 
 test.beforeAll(async () => {
+  test.setTimeout(600_000); // Seeding commits ~2,600 transactions on the HDD.
   // Relocate onto the same filesystem a personal install would use, not the
   // tmpfs default temp directory; dist/ is ignored by Git.
   await mkdir(resolve("dist"), { recursive: true });
@@ -67,16 +88,33 @@ test.beforeAll(async () => {
   const artifact = join(root, "borges");
   await cp(resolve("dist/borges-runtime-check"), artifact, { recursive: true });
   executablePath = join(artifact, "borges");
+  libraryRoot = join(root, "library");
+  // Development shortcut: a closed library previously built from this plan
+  // (copied, never used in place). Reported, so such runs are identifiable.
+  const template = process.env.BORGES_MEASURE_CATALOG;
+  let seedMs: number | null = null;
+  if (template) await cp(template, libraryRoot, { recursive: true });
+  else seedMs = await buildCatalog(libraryRoot);
+  entries = catalogEntries(libraryRoot);
   pdf = representativePdf();
   epub = representativeEpub();
-  // Replace the allowlisted fixture bytes in the relocated copy, so the real
-  // protocol handler serves them; the product gains no arbitrary-file loader.
-  const fixtures = join(
-    artifact,
-    "resources/app/out/renderer/reader-assets/fixtures",
-  );
-  await writeFile(join(fixtures, "known.pdf"), pdf.bytes);
-  await writeFile(join(fixtures, "reflowable.epub"), epub.bytes);
+  // The large entries are the generator's default documents.
+  expect(entries.get(LARGE_PDF)?.size).toBe(pdf.bytes.length);
+  expect(entries.get(LARGE_EPUB)?.size).toBe(epub.bytes.length);
+  const sizes = [...entries.values()].map((entry) => entry.size);
+  report.catalog = {
+    entries: entries.size,
+    pdf: plan.filter((book) => book.format === "pdf").length,
+    epub: plan.filter((book) => book.format === "epub").length,
+    archived: CATALOG_SIZE - live,
+    unfiled: plan.filter((book) => book.sections.length === 0).length,
+    sections: SECTIONS.length,
+    bytes: sizes.reduce((sum, size) => sum + size, 0),
+    smallestBytes: Math.min(...sizes),
+    largestBytes: Math.max(...sizes),
+    seedMs:
+      seedMs === null ? "copied from BORGES_MEASURE_CATALOG" : round(seedMs),
+  };
   report.documents = Object.fromEntries(
     Object.entries({ pdf, epub }).map(([name, { bytes, ...rest }]) => [
       name,
@@ -95,7 +133,7 @@ test.afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-async function launch(profile: string) {
+async function launch(profile: string, library = "") {
   return electron.launch({
     executablePath,
     args: [],
@@ -109,12 +147,14 @@ async function launch(profile: string) {
       BORGES_DEV_PROFILE: profile,
       // Keep the packaged default library inside the measurement profile.
       XDG_DATA_HOME: join(profile, "data"),
-      BORGES_LIBRARY_ROOT: "",
+      BORGES_LIBRARY_ROOT: library,
     },
   });
 }
 
-const round = (value: number) => Math.round(value * 10) / 10;
+function round(value: number) {
+  return Math.round(value * 10) / 10;
+}
 function summary(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   const at = (q: number) =>
@@ -127,6 +167,8 @@ function summary(values: number[]) {
     max: round(sorted.at(-1) ?? 0),
   };
 }
+const within = (value: number, budget: number, name: string) =>
+  expect.soft(value, `${name} ≤ ${budget}`).toBeLessThanOrEqual(budget);
 
 /** Proportional set size per Electron process, from the kernel, in MiB. */
 async function memory(application: ElectronApplication) {
@@ -159,37 +201,73 @@ async function settle() {
   await new Promise((done) => setTimeout(done, 1500));
 }
 
+/** The library window once it lists every live catalog entry. */
+async function catalogShown(library: Page, expected: number) {
+  await expect(library.getByTestId("library-id")).toHaveText(
+    /^[0-9a-f-]{36}$/,
+    { timeout: 30_000 },
+  );
+  await expect(
+    library
+      .getByRole("region", { name: "Catalog books" })
+      .getByRole("listitem"),
+  ).toHaveCount(expected, { timeout: 30_000 });
+}
+
+function stored(sql: string, ...values: string[]) {
+  const database = new DatabaseSync(join(libraryRoot, "catalog.sqlite"), {
+    readOnly: true,
+  });
+  try {
+    return database.prepare(sql).all(...values);
+  } finally {
+    database.close();
+  }
+}
+
+/** Each planned query through the library window's IPC; counts are checked. */
+async function timeQueries(library: Page, repetitions: number) {
+  const results: Record<string, ReturnType<typeof summary>> = {};
+  for (const { name, query, count } of queries) {
+    const run = await library.evaluate(
+      async ({ query, repetitions }) => {
+        const times: number[] = [];
+        let found = -1;
+        for (let i = 0; i < repetitions; i++) {
+          const started = performance.now();
+          found = (await window.borges.library.books(query as never)).length;
+          times.push(performance.now() - started);
+        }
+        return { times, found };
+      },
+      { query, repetitions },
+    );
+    expect(run.found, name).toBe(count);
+    results[name] = summary(run.times);
+  }
+  return results;
+}
+
 async function openReader(
   application: ElectronApplication,
   library: Page,
-  bookId: "sample-pdf" | "sample-epub",
+  title: string,
+  opened: (reader: Page, ui: ReturnType<Page["frameLocator"]>) => Promise<void>,
 ) {
   const started = performance.now();
   const [reader] = await Promise.all([
     application.waitForEvent("window"),
-    library.evaluate((id) => window.development.openReader(id), bookId),
+    library.getByRole("button", { name: `Read ${title}`, exact: true }).click(),
   ]);
   const ui = reader.frameLocator('iframe[title="Book content"]');
   await expect(ui.getByRole("status")).toHaveText("Ready", { timeout: 30_000 });
-  if (bookId === "sample-pdf") {
-    await expect(ui.getByTestId("page-text")).toContainText(PDF_OPENING);
-  } else {
-    await expect
-      .poll(async () => {
-        try {
-          return (await chapter(reader).locator("h1").textContent()) ?? "";
-        } catch {
-          return ""; // chapter frame not created yet
-        }
-      })
-      .toBe(EPUB_OPENING);
-  }
+  await opened(reader, ui);
   const elapsed = performance.now() - started;
   // Shell renderer and the separate-origin content frame's renderer.
   const { pid, contentPid } = await application.evaluate(
     ({ BrowserWindow }, title) => {
       const contents = BrowserWindow.getAllWindows().find((window) =>
-        window.getTitle().startsWith(title),
+        window.getTitle().startsWith(`${title} — `),
       )?.webContents;
       return {
         pid: contents?.getOSProcessId(),
@@ -198,9 +276,23 @@ async function openReader(
         )?.osProcessId,
       };
     },
-    bookId === "sample-pdf" ? "Sample PDF" : "Sample EPUB",
+    title,
   );
   return { reader, ui, elapsed, pid, contentPid };
+}
+
+const pdfOpening = async (_: Page, ui: ReturnType<Page["frameLocator"]>) =>
+  expect(ui.getByTestId("page-text")).toContainText(PDF_OPENING);
+async function epubOpening(reader: Page) {
+  await expect
+    .poll(async () => {
+      try {
+        return (await chapter(reader).locator("h1").textContent()) ?? "";
+      } catch {
+        return ""; // chapter frame not created yet
+      }
+    })
+    .toBe(EPUB_OPENING);
 }
 
 function chapter(reader: Page): Frame {
@@ -245,6 +337,42 @@ async function turns(
   return times;
 }
 
+const savedSequence = async (reader: Page) =>
+  Number(await reader.getByTestId("save-status").getAttribute("data-sequence"));
+
+/**
+ * From a quiet reader, turn once and time until the shell shows that main
+ * committed a newer position: page turn, report, coalescing, commit, reply.
+ */
+async function acknowledgedTurns(
+  reader: Page,
+  ui: ReturnType<Page["frameLocator"]>,
+  count: number,
+) {
+  const surface = ui.getByRole("region", { name: "Reading surface" });
+  const visible = ui.getByTestId("visible-text");
+  await surface.focus();
+  const times: number[] = [];
+  for (let turn = 0; turn < count; turn++) {
+    await reader.waitForTimeout(400); // Past the 250 ms coalescing interval.
+    const before = await savedSequence(reader);
+    const text = (await visible.textContent()) ?? "";
+    const started = performance.now();
+    await surface.press("ArrowRight");
+    await expect
+      .poll(async () => (await visible.textContent()) ?? "", { intervals: [5] })
+      .not.toBe(text);
+    await expect
+      .poll(() => savedSequence(reader), { intervals: [5], timeout: 5000 })
+      .toBeGreaterThan(before);
+    times.push(performance.now() - started);
+  }
+  await expect(reader.getByTestId("save-status")).toContainText(
+    "Position saved",
+  );
+  return times;
+}
+
 async function search(
   ui: ReturnType<Page["frameLocator"]>,
   query: string,
@@ -281,12 +409,12 @@ function run(command: string, args: string[]) {
   return result.stdout;
 }
 
-/** Drop the artifact's and profile's clean pages from the page cache. Shared
- * system libraries stay cached, so this is a partial cold start. */
+/** Drop the artifact's, profiles' and library's clean pages from the page
+ * cache. Shared system libraries stay cached, so this is a partial cold start. */
 async function evict() {
   run("sync", ["-f", root]);
-  const entries = await readdir(root, { recursive: true, withFileTypes: true });
-  for (const entry of entries)
+  const files = await readdir(root, { recursive: true, withFileTypes: true });
+  for (const entry of files)
     if (entry.isFile())
       run("dd", [
         `if=${join(entry.parentPath, entry.name)}`,
@@ -306,50 +434,75 @@ async function evict() {
   ).toBe("0");
 }
 
-test("first, repeated, and evicted-cache packaged launches", async () => {
-  const profile = await mkdtemp(join(root, "launch-profile-"));
-  const launches: number[] = [];
-  const evicted: number[] = [];
-  let libraryId: string | undefined;
-  for (let attempt = 0; attempt < 9; attempt++) {
-    const cold = attempt >= 6;
-    if (cold) await evict();
+test("first-run, warm and evicted-cache launches with a 500-entry catalog", async () => {
+  // A fresh profile creates its empty library on the first launch.
+  const fresh = await mkdtemp(join(root, "fresh-profile-"));
+  const empty: number[] = [];
+  for (let attempt = 0; attempt < 4; attempt++) {
     const started = performance.now();
-    const application = await launch(profile);
+    const application = await launch(fresh);
     try {
       const library = await application.firstWindow();
-      // Each launch locks and validates the same catalog before showing it.
       await expect(library.getByTestId("library-id")).toHaveText(
-        libraryId ?? /^[0-9a-f-]{36}$/,
+        /^[0-9a-f-]{36}$/,
         { timeout: 30_000 },
       );
-      libraryId ??=
-        (await library.getByTestId("library-id").textContent()) ?? undefined;
-      (cold ? evicted : launches).push(performance.now() - started);
+      await expect(
+        library.getByText("No books have been added to this library yet."),
+      ).toBeVisible();
+      empty.push(performance.now() - started);
     } finally {
       await application.close();
     }
   }
+
+  const profile = await mkdtemp(join(root, "catalog-profile-"));
+  await resetAccessTimes(libraryRoot);
+  const warm: number[] = [];
+  const evicted: number[] = [];
+  for (let attempt = 0; attempt < 9; attempt++) {
+    const cold = attempt >= 6;
+    if (cold) await evict();
+    const started = performance.now();
+    const application = await launch(profile, libraryRoot);
+    try {
+      await catalogShown(await application.firstWindow(), live);
+      // The first catalog launch warms caches after seeding; not recorded.
+      if (attempt > 0)
+        (cold ? evicted : warm).push(performance.now() - started);
+    } finally {
+      await application.close();
+    }
+  }
+  // Listing the catalog never reads a book file (A13: no eager loading).
+  const read = await readSince(libraryRoot);
+  expect(read).toEqual([]);
+
   report.launchMs = {
-    firstRunFreshProfile: round(launches[0] ?? 0),
-    repeatedWarm: summary(launches.slice(1)),
-    evictedArtifactAndProfile: summary(evicted),
-    note: "Wall time from launch to the library window showing the locked, validated catalog identity (created on the first run), including Playwright launch/CDP attach. Eviction uses POSIX_FADV_DONTNEED on artifact/profile files; system libraries remain cached.",
+    firstRunFreshProfile: round(empty[0] ?? 0),
+    emptyLibraryWarm: summary(empty.slice(1)),
+    catalogWarm: summary(warm),
+    catalogEvicted: summary(evicted),
+    bookFilesReadByLaunches: read.length,
+    note: `Wall time from launch until the library window shows the locked, validated catalog identity and lists all ${live} unarchived entries of the ${CATALOG_SIZE}-entry catalog (or the empty-library message), including Playwright launch/CDP attach. Eviction uses POSIX_FADV_DONTNEED on artifact/profile/library files; system libraries remain cached.`,
   };
-  const within = (value: number, budget: number, name: string) =>
-    expect.soft(value, `${name} ≤ ${budget}`).toBeLessThanOrEqual(budget);
+  within(empty[0] ?? Infinity, budgets.firstRunLaunchMs, "first-run launch");
   within(
-    summary(launches.slice(1)).median,
-    budgets.warmLaunchMedianMs,
-    "warm launch median",
+    summary(warm).median,
+    budgets.catalogWarmLaunchMedianMs,
+    "catalog warm launch median",
   );
-  within(Math.max(...evicted), budgets.evictedLaunchMaxMs, "evicted launch");
-  within(launches[0] ?? Infinity, budgets.firstRunLaunchMs, "first-run launch");
+  within(
+    Math.max(...evicted),
+    budgets.catalogEvictedLaunchMaxMs,
+    "catalog evicted launch",
+  );
 });
 
-test("two representative readers: open, page turns, search, memory and disposal", async () => {
+test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, memory and disposal", async () => {
   const profile = await mkdtemp(join(root, "reader-profile-"));
-  const application = await launch(profile);
+  await resetAccessTimes(libraryRoot);
+  const application = await launch(profile, libraryRoot);
   try {
     report.session = {
       cpu: cpus()[0]?.model,
@@ -373,14 +526,22 @@ test("two representative readers: open, page turns, search, memory and disposal"
       }))),
     };
     const library = await application.firstWindow();
-    await expect(library.getByTestId("library-id")).toHaveText(
-      /^[0-9a-f-]{36}$/,
-    );
+    await catalogShown(library, live);
+    // Idle is sampled after browsing, so the library renderer's own query
+    // garbage is not later attributed to the readers.
+    const queriesIdle = await timeQueries(library, 20);
     await settle();
     const idle = await memory(application);
+    // No book is rendered in the background: the library is the only page.
+    expect(idle.processes.filter((p) => p.type === "Tab")).toHaveLength(1);
 
-    const first = await openReader(application, library, "sample-pdf");
-    const second = await openReader(application, library, "sample-epub");
+    const first = await openReader(application, library, LARGE_PDF, pdfOpening);
+    const second = await openReader(
+      application,
+      library,
+      LARGE_EPUB,
+      (reader) => epubOpening(reader),
+    );
     await settle();
     const opened = await memory(application);
 
@@ -397,6 +558,21 @@ test("two representative readers: open, page turns, search, memory and disposal"
     await expect(second.ui.locator("#location")).not.toHaveText(
       "Chapter 1 · 0%",
     );
+    const pdfSaves = await acknowledgedTurns(first.reader, first.ui, 5);
+    const epubSaves = await acknowledgedTurns(second.reader, second.ui, 5);
+    const [pdfEntry, epubEntry] = [LARGE_PDF, LARGE_EPUB].map((title) => {
+      const entry = entries.get(title);
+      if (!entry) throw new Error(`Missing ${title}`);
+      return entry;
+    }) as [CatalogEntry, CatalogEntry];
+    expect(
+      stored(
+        "SELECT p.pdf_page AS page FROM books b JOIN positions p ON p.revision_id = b.current_revision_id WHERE b.id = ?",
+        pdfEntry.id,
+      ),
+    ).toEqual([{ page: 26 }]);
+    // Library queries while both readers are open.
+    const queriesReading = await timeQueries(library, 20);
 
     const pdfCommon = await search(first.ui, COMMON_WORD, pdf.commonCount);
     const pdfRare = await search(first.ui, RARE_WORD, 1);
@@ -407,11 +583,27 @@ test("two representative readers: open, page turns, search, memory and disposal"
     const epubCommon = await search(second.ui, COMMON_WORD, epub.commonCount);
     const epubRare = await search(second.ui, RARE_WORD, 1);
     await second.ui.locator("#results button").first().click();
-    await expect(second.ui.locator("#location")).toHaveText(
-      new RegExp(`^Chapter ${epub.rareLocation} · \\d+%$`),
+    const epubRareLocation = new RegExp(
+      `^Chapter ${epub.rareLocation} · \\d+%$`,
     );
+    await expect(second.ui.locator("#location")).toHaveText(epubRareLocation);
     await settle();
     const searched = await memory(application);
+
+    // Only the two opened entries changed status or gained a position.
+    expect(
+      stored(
+        "SELECT reading_status AS status, count(*) AS books FROM books GROUP BY reading_status ORDER BY status",
+      ),
+    ).toEqual([
+      { status: "reading", books: 2 },
+      { status: "unread", books: CATALOG_SIZE - 2 },
+    ]);
+    expect(
+      stored(
+        "SELECT b.id AS id FROM positions p JOIN books b ON b.current_revision_id = p.revision_id ORDER BY b.id",
+      ),
+    ).toEqual([pdfEntry.id, epubEntry.id].sort().map((id) => ({ id })));
 
     // Disposal: closing each reader must end its renderer and return memory.
     const exitTimes: number[] = [];
@@ -441,10 +633,17 @@ test("two representative readers: open, page turns, search, memory and disposal"
           { timeout: 10_000, intervals: [50] },
         )
         .toBe(false);
+    // Closing flushed the rare-hit positions.
+    expect(
+      stored(
+        "SELECT p.pdf_page AS page FROM books b JOIN positions p ON p.revision_id = b.current_revision_id WHERE b.id = ?",
+        pdfEntry.id,
+      ),
+    ).toEqual([{ page: pdf.rareLocation }]);
     await settle();
     const closed = await memory(application);
 
-    // Repeated open/close cycles: warm open times and growth after disposal.
+    // Repeated open/close cycles: warm resumed opens and growth after disposal.
     const warm = { pdf: [] as number[], epub: [] as number[] };
     const cycles = Number(process.env.BORGES_MEASURE_CYCLES ?? 5);
     const series: {
@@ -453,8 +652,14 @@ test("two representative readers: open, page turns, search, memory and disposal"
       mainHeapMiB: number;
     }[] = [];
     for (let cycle = 0; cycle < cycles; cycle++) {
-      const a = await openReader(application, library, "sample-pdf");
-      const b = await openReader(application, library, "sample-epub");
+      const a = await openReader(application, library, LARGE_PDF, (_, ui) =>
+        expect(ui.locator("#location")).toHaveText(
+          `Page ${pdf.rareLocation} of ${pdf.units}`,
+        ),
+      );
+      const b = await openReader(application, library, LARGE_EPUB, (_, ui) =>
+        expect(ui.locator("#location")).toHaveText(epubRareLocation),
+      );
       warm.pdf.push(a.elapsed);
       warm.epub.push(b.elapsed);
       await a.reader.close();
@@ -477,15 +682,28 @@ test("two representative readers: open, page turns, search, memory and disposal"
       ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
     );
     expect(windows).toBe(1);
+    // Exactly the two opened books' files were read (A13: no eager loading);
+    // this also shows that the access-time check detects reads.
+    const read = await readSince(libraryRoot);
+    expect(read).toEqual([pdfEntry.path, epubEntry.path].sort());
 
+    report.catalogQueriesMs = {
+      libraryIdle: queriesIdle,
+      twoReadersOpen: queriesReading,
+      note: "Library-window IPC round trip (renderer performance.now) for each planned query, 20 repetitions; result counts checked against the plan.",
+    };
     report.readers = {
       openMs: {
         pdfFirst: round(first.elapsed),
         epubFirst: round(second.elapsed),
-        pdfWarm: summary(warm.pdf),
-        epubWarm: summary(warm.epub),
+        pdfResumedWarm: summary(warm.pdf),
+        epubResumedWarm: summary(warm.epub),
       },
       turnMs: { pdf: summary(pdfTurns), epub: summary(epubTurns) },
+      positionAcknowledgedMs: {
+        pdf: summary(pdfSaves),
+        epub: summary(epubSaves),
+      },
       searchMs: {
         pdf: { common: pdfCommon, rare: pdfRare },
         epub: { common: epubCommon, rare: epubRare },
@@ -496,6 +714,7 @@ test("two representative readers: open, page turns, search, memory and disposal"
         epub: { shell: second.pid, content: second.contentPid },
         sharedContentRenderer: first.contentPid === second.contentPid,
       },
+      bookFilesRead: read.length,
     };
     report.memory = {
       libraryIdle: idle,
@@ -505,17 +724,26 @@ test("two representative readers: open, page turns, search, memory and disposal"
       afterOpenCloseCycles: cycled,
       cycleSeries: series,
     };
-    const within = (value: number, budget: number, name: string) =>
-      expect.soft(value, `${name} ≤ ${budget}`).toBeLessThanOrEqual(budget);
+    for (const [name, results] of Object.entries({
+      idle: queriesIdle,
+      reading: queriesReading,
+    }))
+      for (const [query, result] of Object.entries(results))
+        within(result.p95, budgets.catalogQueryP95Ms, `${name} ${query} p95`);
     for (const [name, value] of Object.entries({
       "PDF first open": first.elapsed,
       "EPUB first open": second.elapsed,
-      "PDF warm open": Math.max(...warm.pdf),
-      "EPUB warm open": Math.max(...warm.epub),
+      "PDF resumed open": Math.max(...warm.pdf),
+      "EPUB resumed open": Math.max(...warm.epub),
     }))
       within(value, budgets.readerOpenMaxMs, name);
     within(summary(pdfTurns).p95, budgets.pageTurnP95Ms, "PDF turn p95");
     within(summary(epubTurns).p95, budgets.pageTurnP95Ms, "EPUB turn p95");
+    within(
+      Math.max(...pdfSaves, ...epubSaves),
+      budgets.positionAcknowledgedMaxMs,
+      "position acknowledged",
+    );
     for (const [name, result] of Object.entries({
       "PDF common": pdfCommon,
       "EPUB common": epubCommon,

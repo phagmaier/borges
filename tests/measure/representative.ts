@@ -105,8 +105,17 @@ function png(width: number, height: number, index: number) {
   ]);
 }
 
-export function representativePdf(pages = 400): RepresentativeDocument {
-  const text = prose(0x5eed01);
+/** Variation for the many smaller catalog books: distinct prose and heading. */
+export interface Variant {
+  seed: number;
+  opening: string;
+}
+
+export function representativePdf(
+  pages = 400,
+  variant: Variant = { seed: 0x5eed01, opening: PDF_OPENING },
+): RepresentativeDocument {
+  const text = prose(variant.seed);
   const rarePage = pages - 3;
   const objects: Buffer[] = [Buffer.alloc(0), Buffer.alloc(0)];
   const add = (object: Buffer | string) =>
@@ -134,7 +143,7 @@ export function representativePdf(pages = 400): RepresentativeDocument {
       words += row.length;
       lines.push(row.join(" "));
     }
-    const title = page === 1 ? PDF_OPENING : `Page heading ${page}`;
+    const title = page === 1 ? variant.opening : `Page heading ${page}`;
     let content = `BT /F1 16 Tf 54 740 Td (${title}) Tj ET\nBT /F1 11 Tf 15 TL 54 712 Td\n${lines.map((line) => `(${line}) '`).join("\n")}\nET\n`;
     let resources = `/Font << /F1 ${font} 0 R >>`;
     if (page % 25 === 0) {
@@ -226,8 +235,11 @@ function zip(entries: { path: string; data: Buffer; store?: boolean }[]) {
   return Buffer.concat([...local, directory, end]);
 }
 
-export function representativeEpub(chapters = 40): RepresentativeDocument {
-  const text = prose(0x5eed02);
+export function representativeEpub(
+  chapters = 40,
+  variant: Variant = { seed: 0x5eed02, opening: EPUB_OPENING },
+): RepresentativeDocument {
+  const text = prose(variant.seed);
   const rareChapter = chapters - 2;
   const entries: { path: string; data: Buffer; store?: boolean }[] = [
     {
@@ -265,7 +277,8 @@ export function representativeEpub(chapters = 40): RepresentativeDocument {
       image = `<p><img src="${href}" width="800" height="600" alt="Illustration ${chapter}" style="max-width:100%;height:auto"/></p>`;
       images++;
     }
-    const title = chapter === 1 ? EPUB_OPENING : `Chapter heading ${chapter}`;
+    const title =
+      chapter === 1 ? variant.opening : `Chapter heading ${chapter}`;
     const href = `chapter-${chapter}.xhtml`;
     entries.push({
       path: href,
@@ -289,7 +302,7 @@ export function representativeEpub(chapters = 40): RepresentativeDocument {
     {
       path: "book.opf",
       data: Buffer.from(
-        `<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">urn:uuid:4f1f0a52-7bd4-4c39-9a44-8d2f0d7c5e11</dc:identifier><dc:title>Borges representative measurement book</dc:title><dc:language>en</dc:language><meta property="dcterms:modified">2026-01-01T00:00:00Z</meta></metadata><manifest>${manifest.join("")}<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/></manifest><spine>${spine.join("")}</spine></package>`,
+        `<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">urn:uuid:4f1f0a52-7bd4-4c39-9a44-${(variant.seed >>> 0).toString(16).padStart(12, "0")}</dc:identifier><dc:title>${variant.opening}</dc:title><dc:language>en</dc:language><meta property="dcterms:modified">2026-01-01T00:00:00Z</meta></metadata><manifest>${manifest.join("")}<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/></manifest><spine>${spine.join("")}</spine></package>`,
       ),
     },
   );
