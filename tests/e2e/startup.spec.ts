@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,7 +8,7 @@ import {
   test,
 } from "@playwright/test";
 
-test("built desktop shell loads with sandboxed UI and working embedded SQLite", async () => {
+test("built desktop shell loads with sandboxed UI and its locked development catalog", async () => {
   const profile = await mkdtemp(join(tmpdir(), "borges-smoke-"));
   let application: ElectronApplication | undefined;
   try {
@@ -35,8 +35,26 @@ test("built desktop shell loads with sandboxed UI and working embedded SQLite", 
     expect(diagnostics).toMatchObject({
       sandboxed: true,
       contextIsolated: true,
-      database: { schemaVersion: 1, launchCount: 1 },
+      catalog: {
+        schemaVersion: 1,
+        created: true,
+        // Development builds keep the library inside their own profile.
+        root: join(profile, "library"),
+      },
     });
+    expect(diagnostics.catalog.libraryId).toMatch(/^[0-9a-f-]{36}$/);
+    expect((await readdir(join(profile, "library"))).sort()).toEqual([
+      "catalog.sqlite",
+      "catalog.sqlite-shm",
+      "catalog.sqlite-wal",
+      "covers",
+      "files",
+      "library.lock",
+      "library.lock-journal",
+      "library.lock-owner.json",
+      "recovery",
+      "staging",
+    ]);
     const policy = await page
       .locator('meta[http-equiv="Content-Security-Policy"]')
       .getAttribute("content");
@@ -47,7 +65,9 @@ test("built desktop shell loads with sandboxed UI and working embedded SQLite", 
       /^\d+\.\d+\.\d+$/,
     );
 
-    await expect(page.getByTestId("launch-count")).toHaveText("1");
+    await expect(page.getByTestId("library-id")).toHaveText(
+      diagnostics.catalog.libraryId,
+    );
   } finally {
     try {
       await application?.close();

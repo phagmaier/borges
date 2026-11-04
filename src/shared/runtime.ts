@@ -1,10 +1,14 @@
 import type { DevelopmentWindow } from "./windows";
 
-export interface RuntimeDatabaseInfo {
+export interface CatalogInfo {
   sqlite: string;
   schemaVersion: number;
-  launchCount: number;
-  marker: string;
+  libraryId: string;
+  root: string;
+  created: boolean;
+  upgradedFrom: number | null;
+  /** Process ID named by a stale lock record replaced at startup. */
+  recoveredStaleLockPid: number | null;
 }
 
 export interface RuntimeInfo {
@@ -12,7 +16,7 @@ export interface RuntimeInfo {
   chromium: string;
   node: string;
   sqlite: string;
-  database: RuntimeDatabaseInfo;
+  catalog: CatalogInfo;
 }
 
 export interface RendererRuntimeInfo extends RuntimeInfo {

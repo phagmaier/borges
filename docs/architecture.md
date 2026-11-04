@@ -38,7 +38,8 @@ These are organizational defaults, not one class/file per responsibility.
 - Disable renderer Node integration; enable context isolation and sandboxing. Give only trusted application UI a narrow preload bridge. Isolate book content from that bridge and the application origin's privileges.
 - Block book scripts, remote requests, top-level navigation, unsolicited windows, and arbitrary filesystem access. Resource serving permits approved revision/cover assets only, validates canonical paths, and rejects traversal/symlink escapes. Verify the design against foliate-js's CSP requirements during the spike; do not enable unsafe flags to render a sample.
 - Bundle required PDF workers/fonts/CMaps and EPUB assets for offline use. Support permitted local images/fonts while blocking scripted/remote content.
-- Use a single-instance coordinator and an exclusive configured-library lock before writing. A second ordinary launch focuses the first. Another build/process holding a root lock must yield an explanation, not competing writers. Verify lock ownership before stale-lock recovery.
+- Use a single-instance coordinator and an exclusive configured-library lock before writing. A second ordinary launch routes to the first, which reopens or reuses its library window and requests activation. Another build/process holding a root lock must yield an explanation, not competing writers. Verify lock ownership before stale-lock recovery.
+- Implemented root lock (M2-01): one SQLite connection holds an `EXCLUSIVE` lock (`locking_mode = EXCLUSIVE`, a POSIX advisory lock) on `library.lock` for the process lifetime. The kernel releases it when the holder exits or is killed, so successfully acquiring it is the ownership check; no PID heuristics or lock-file deletion are involved. `library.lock-owner.json` only names the holder in conflict explanations and is replaced after acquisition, which is reported as stale-lock recovery. The holding process must never open/close `library.lock` through `node:fs`, because closing any descriptor drops that process's POSIX locks. The root must be on a local filesystem with working POSIX locks.
 
 Primary references: [Electron process model](https://www.electronjs.org/docs/latest/tutorial/process-model), [security](https://www.electronjs.org/docs/latest/tutorial/security), [lifecycle/single-instance APIs](https://www.electronjs.org/docs/latest/api/app), [foliate-js](https://github.com/johnfactotum/foliate-js).
 
@@ -46,7 +47,7 @@ The current diagnostic spike uses bundled allowlisted fixtures and no progress-m
 
 ## Data model
 
-Use foreign keys and versioned migrations. Exact SQL/indexes are implementation details; preserve these meanings:
+Use foreign keys and versioned migrations. Exact SQL/indexes are implementation details; preserve these meanings. Schema 1 implements them in `src/storage/schema.ts`; later changes append forward-only migrations:
 
 | Record | Meaning |
 | --- | --- |
@@ -93,11 +94,15 @@ Agent-selected durable layout:
 ```text
 library/
   catalog.sqlite          catalog, identity/schema, positions, Trash, recovery state
+  library.lock            root lock held while Borges runs (see process boundaries)
+  library.lock-owner.json holder description while running; diagnostic only
   files/<revision-id>.*   immutable live and recoverable PDF/EPUB revisions
   covers/                 referenced durable covers, including manual corrections
   staging/                operation-scoped incomplete copies
   recovery/               catalog migration snapshots/diagnostics when needed
 ```
+
+Catalog upgrades (M2-01) run every pending migration in one transaction with foreign keys checked before commit. Before upgrading an existing catalog, a `VACUUM INTO` snapshot is verified (`quick_check`, old version) and renamed into `recovery/catalog-schema-<from>-before-<to>-<time>.sqlite`; snapshots are retained. A catalog is identified by `PRAGMA application_id` and versioned by `user_version`. Newer, foreign, unreadable or damaged catalogs are refused before any write. Damage means the stored schema differs from what the migrations produce from scratch, so manual extra indexes are also refused. Schema 1 does not persist reader-session generation; the progress-endpoint task defines generation/sequence semantics and may migrate the positions table.
 
 Trash is catalog state; it need not physically move every file. SQLite sidecars belong with the catalog. Back up the whole root while all application windows are closed, and prove a copied root works without the original path. Default root follows the [XDG base-directory convention](https://specifications.freedesktop.org/basedir/latest/). External runtime caches/logs are disposable.
 

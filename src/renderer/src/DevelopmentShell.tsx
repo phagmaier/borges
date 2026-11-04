@@ -36,7 +36,10 @@ export function DevelopmentShell() {
           ? identity.book.title
           : "Development environment"}
       </h1>
-      <p>The desktop shell is ready. No library has been opened or changed.</p>
+      <p>
+        The desktop shell is ready. Its library catalog is open and locked; no
+        books are imported yet.
+      </p>
       {error ? <p role="alert">{error}</p> : null}
       {identity?.kind === "library" ? (
         <section aria-label="Window lifecycle spike">
@@ -89,10 +92,14 @@ export function DevelopmentShell() {
             <dd>{runtime.node}</dd>
             <dt>SQLite</dt>
             <dd data-testid="sqlite-version">{runtime.sqlite}</dd>
-            <dt>Diagnostic schema</dt>
-            <dd>{runtime.database.schemaVersion}</dd>
-            <dt>Committed diagnostic launches</dt>
-            <dd data-testid="launch-count">{runtime.database.launchCount}</dd>
+            <dt>Catalog schema</dt>
+            <dd data-testid="schema-version">
+              {runtime.catalog.schemaVersion}
+            </dd>
+            <dt>Library identity</dt>
+            <dd data-testid="library-id">{runtime.catalog.libraryId}</dd>
+            <dt>Library folder</dt>
+            <dd data-testid="library-root">{runtime.catalog.root}</dd>
           </dl>
         </section>
       ) : (

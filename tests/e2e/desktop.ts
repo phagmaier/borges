@@ -17,7 +17,13 @@ export const test = base.extend<{ application: ElectronApplication }>({
     let nativeProcess: ReturnType<ElectronApplication["process"]> | undefined;
     try {
       application = await electron.launch({
-        args: ["."],
+        // Optional backend selection for platform checks, e.g.
+        // BORGES_ELECTRON_FLAGS=--ozone-platform=wayland.
+        args: [
+          ...(process.env.BORGES_ELECTRON_FLAGS?.split(" ").filter(Boolean) ??
+            []),
+          ".",
+        ],
         env: { ...process.env, BORGES_DEV_PROFILE: profile },
       });
       nativeProcess = application.process();

@@ -125,6 +125,68 @@ test("a second launch reopens the existing instance's library", async ({
   }
 });
 
+// Narrowed second-launch contract (spec): an open library is reused and asked
+// to activate; granting focus is compositor policy, as for reader reopening.
+test("a second launch reuses an open library and requests its activation", async ({
+  application,
+}) => {
+  const library = await application.firstWindow();
+  await expect(
+    library.getByRole("button", { name: "Open Sample PDF" }),
+  ).toBeVisible();
+  const [reader] = await Promise.all([
+    application.waitForEvent("window"),
+    library.evaluate(() => window.development.openReader("sample-pdf")),
+  ]);
+  await expect(
+    reader.getByRole("heading", { name: "Sample PDF", exact: true }),
+  ).toBeVisible();
+  const libraryWindow = await application.browserWindow(library);
+  const before = await libraryWindow.evaluate((window) => {
+    const counted = window as typeof window & { activationRequests?: number };
+    counted.activationRequests = 0;
+    const focus = window.focus.bind(window);
+    window.focus = () => {
+      counted.activationRequests = (counted.activationRequests ?? 0) + 1;
+      focus();
+    };
+    return { id: window.id, contents: window.webContents.id };
+  });
+  let created = 0;
+  application.on("window", () => created++);
+  const profile = await application.evaluate(({ app }) =>
+    app.getPath("userData"),
+  );
+  const secondary = spawn(application.process().spawnfile, ["."], {
+    env: { ...process.env, BORGES_DEV_PROFILE: profile },
+    stdio: "ignore",
+  });
+  try {
+    const [code] = await once(secondary, "exit");
+    expect(code).toBe(0);
+    await expect
+      .poll(() =>
+        libraryWindow.evaluate(
+          (window) =>
+            (window as typeof window & { activationRequests?: number })
+              .activationRequests,
+        ),
+      )
+      .toBe(1);
+    expect(
+      await libraryWindow.evaluate((window) => ({
+        id: window.id,
+        contents: window.webContents.id,
+        visible: window.isVisible(),
+      })),
+    ).toEqual({ ...before, visible: true });
+    expect(created).toBe(0);
+    expect(application.windows()).toHaveLength(2);
+  } finally {
+    if (secondary.exitCode === null) secondary.kill();
+  }
+});
+
 test("a reader load failure removes its reservation and allows retry", async ({
   application,
 }) => {
@@ -162,7 +224,10 @@ test("a reader load failure removes its reservation and allows retry", async ({
   expect(application.windows()).toHaveLength(2);
 });
 
-test("reopening an existing reader transfers native desktop focus", async ({
+// Narrowed M1-02 contract (spec, A5): reopening reuses the window and
+// requests activation. Whether the compositor grants it is desktop policy;
+// Hyprland with misc:focus_on_activate=false answers with an urgency hint.
+test("reopening an existing reader reuses its window and requests activation", async ({
   application,
 }) => {
   const library = await application.firstWindow();
@@ -181,10 +246,36 @@ test("reopening an existing reader transfers native desktop focus", async ({
   await expect
     .poll(() => pdfWindow.evaluate((window) => window.isFocused()))
     .toBe(false);
+  const before = await pdfWindow.evaluate((window) => {
+    const counted = window as typeof window & { activationRequests?: number };
+    counted.activationRequests = 0;
+    const focus = window.focus.bind(window);
+    window.focus = () => {
+      counted.activationRequests = (counted.activationRequests ?? 0) + 1;
+      focus();
+    };
+    return { id: window.id, contents: window.webContents.id };
+  });
+  let created = 0;
+  application.on("window", () => created++);
   await library.evaluate(() => window.development.openReader("sample-pdf"));
-  await expect
-    .poll(() => pdfWindow.evaluate((window) => window.isFocused()))
-    .toBe(true);
+  expect(created).toBe(0);
+  expect(application.windows()).toHaveLength(3);
+  expect(
+    await pdfWindow.evaluate((window) => ({
+      id: window.id,
+      contents: window.webContents.id,
+      visible: window.isVisible(),
+      activationRequests: (
+        window as typeof window & {
+          activationRequests?: number;
+        }
+      ).activationRequests,
+    })),
+  ).toEqual({ ...before, visible: true, activationRequests: 1 });
+  await expect(
+    pdf.getByRole("heading", { name: "Sample PDF", exact: true }),
+  ).toBeVisible();
 });
 
 test("window commands reject unknown books, reader impersonation, and unregistered senders", async ({

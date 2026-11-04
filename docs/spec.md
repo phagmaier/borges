@@ -1,6 +1,6 @@
 # Borges — version-one specification
 
-Status: discovery complete; development scaffold/toolchain are installed. The minimal shell and embedded SQLite work; fixture rendering, reader interactions, explicit snapshot restoration and diagnostic adversarial isolation are verified. Packaged-runtime SQLite persistence/schema handling is also verified. Catalog-backed progress/session validation, library features and packaged resource measurements remain pending. See [development setup](development.md) for the verified subset. Updated 2026-11-03. Borges is the project name.
+Status: discovery complete; development scaffold/toolchain are installed. The minimal shell and embedded SQLite work; fixture rendering, reader interactions, explicit snapshot restoration and diagnostic adversarial isolation are verified. Packaged-runtime SQLite persistence/schema handling is also verified, and the versioned catalog with migrations and the exclusive library-root lock is implemented (M2-01). Catalog-backed progress/session validation, library features and packaged resource measurements remain pending. See [development setup](development.md) for the verified subset. Updated 2026-11-03. Borges is the project name.
 
 The user confirmed the product choices below and delegated remaining routine behavior/storage defaults to the agent. **Agent-selected defaults** identify that delegation. The information layout is provisional; exact appearance is deliberately deferred to later prototypes.
 
@@ -140,12 +140,12 @@ Save sizing per book. EPUB resume uses content location, not screen-page number.
 
 ## Windows and offline behavior
 
-One library window; separate readers for different books; at most one reader per book. Reopening focuses an existing reader. Closing library leaves readers open; last window closes the app.
+One library window; separate readers for different books; at most one reader per book. Reopening reuses the existing reader window and requests activation; where the compositor denies it, one click brings it forward. Closing library leaves readers open; last window closes the app.
 
 **Agent-selected defaults:**
 
 - Start at All Books, without automatically restoring reader windows. Readers can reopen/focus the library. Explicit Quit saves/closes all windows. No tray/background process.
-- One coordinating application instance for the configured library. Second ordinary launch focuses/reopens the library instead of competing writes. One configured library initially, no multi-library UI.
+- One coordinating application instance for the configured library. Second ordinary launch reopens a closed library window, or reuses the open one and requests activation (where the compositor denies it, one click brings it forward), instead of competing writes. One configured library initially, no multi-library UI.
 - Bundle runtime reading assets/fonts/workers. No accounts, telemetry, online metadata, remote-resource fetching, automatic updates, sync, or runtime network service.
 - Block book-initiated external navigation/network/window creation. Offer Copy Link for external references; external browsing is outside the offline flow.
 - Initial delivery: local build directory with bundled runtime, launch script, and desktop launcher for Arch. Public/AUR/AppImage packaging is deferred. Validate actual display session/scaling rather than assuming Wayland/X11 behavior.
@@ -178,7 +178,7 @@ Release criteria, not passing-test claims. Use small known/appropriately license
 | A2 | One book in two nested branches has one current file; parent results deduplicate. Removing membership/deleting a branch preserves book and surviving branch. |
 | A3 | Known title/author/subject searches/filters obey view/archive/Trash boundaries. |
 | A4 | Exercise all status/archive transitions, including archived unread reference opening, Finished reference opening, and reread reset. |
-| A5 | Two books open, duplicate opening focuses, library closes/reopens from reader, last window exits; independent positions survive. |
+| A5 | Two books open, duplicate opening reuses the existing reader and requests activation (where the compositor denies activation, one click brings it forward), library closes/reopens from reader, last window exits; independent positions survive. |
 | A6 | Known three-page PDF navigates with agreed keys and `:3`; invalid jumps do not move. Search finds known text; image-only PDF renders/reports text absence. Zoom/pan remains within one page. |
 | A7 | EPUB resize/font change/reopen keeps a known passage visible. Verify chapter/percentage jumps, search/images, and single-page fixed-layout EPUB. |
 | A8 | Identical reimport skips; matching metadata with changed bytes prompts all choices; Keep Both creates a distinct entry. Manual replacement works with mismatched metadata. |

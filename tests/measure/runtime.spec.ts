@@ -107,6 +107,9 @@ async function launch(profile: string) {
       ELECTRON_RUN_AS_NODE: "",
       ELECTRON_RENDERER_URL: "",
       BORGES_DEV_PROFILE: profile,
+      // Keep the packaged default library inside the measurement profile.
+      XDG_DATA_HOME: join(profile, "data"),
+      BORGES_LIBRARY_ROOT: "",
     },
   });
 }
@@ -307,6 +310,7 @@ test("first, repeated, and evicted-cache packaged launches", async () => {
   const profile = await mkdtemp(join(root, "launch-profile-"));
   const launches: number[] = [];
   const evicted: number[] = [];
+  let libraryId: string | undefined;
   for (let attempt = 0; attempt < 9; attempt++) {
     const cold = attempt >= 6;
     if (cold) await evict();
@@ -314,10 +318,13 @@ test("first, repeated, and evicted-cache packaged launches", async () => {
     const application = await launch(profile);
     try {
       const library = await application.firstWindow();
-      await expect(library.getByTestId("launch-count")).toHaveText(
-        String(attempt + 1),
+      // Each launch locks and validates the same catalog before showing it.
+      await expect(library.getByTestId("library-id")).toHaveText(
+        libraryId ?? /^[0-9a-f-]{36}$/,
         { timeout: 30_000 },
       );
+      libraryId ??=
+        (await library.getByTestId("library-id").textContent()) ?? undefined;
       (cold ? evicted : launches).push(performance.now() - started);
     } finally {
       await application.close();
@@ -327,7 +334,7 @@ test("first, repeated, and evicted-cache packaged launches", async () => {
     firstRunFreshProfile: round(launches[0] ?? 0),
     repeatedWarm: summary(launches.slice(1)),
     evictedArtifactAndProfile: summary(evicted),
-    note: "Wall time from launch to the library's committed launch count, including Playwright launch/CDP attach. Eviction uses POSIX_FADV_DONTNEED on artifact/profile files; system libraries remain cached.",
+    note: "Wall time from launch to the library window showing the locked, validated catalog identity (created on the first run), including Playwright launch/CDP attach. Eviction uses POSIX_FADV_DONTNEED on artifact/profile files; system libraries remain cached.",
   };
   const within = (value: number, budget: number, name: string) =>
     expect.soft(value, `${name} ≤ ${budget}`).toBeLessThanOrEqual(budget);
@@ -366,7 +373,9 @@ test("two representative readers: open, page turns, search, memory and disposal"
       }))),
     };
     const library = await application.firstWindow();
-    await expect(library.getByTestId("launch-count")).toHaveText("1");
+    await expect(library.getByTestId("library-id")).toHaveText(
+      /^[0-9a-f-]{36}$/,
+    );
     await settle();
     const idle = await memory(application);
 

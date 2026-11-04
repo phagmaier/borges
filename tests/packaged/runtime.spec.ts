@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,6 +9,7 @@ import {
   expect,
   test,
 } from "@playwright/test";
+import { openLibrary } from "../../src/storage/catalog";
 
 let root: string;
 let executablePath: string;
@@ -33,7 +34,10 @@ test.afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-function environment() {
+/** The packaged default root under this test's isolated XDG data home. */
+const libraryFor = (home: string) => join(home, "data/borges/library");
+
+function environment(home = profile, extra: Record<string, string> = {}) {
   return {
     ...process.env,
     PATH: "/usr/bin:/bin",
@@ -42,20 +46,57 @@ function environment() {
     ELECTRON_RUN_AS_NODE: "",
     // A packaged app must use its local bundle even with a stray dev setting.
     ELECTRON_RENDERER_URL: "http://127.0.0.1:1",
-    BORGES_DEV_PROFILE: profile,
+    BORGES_DEV_PROFILE: home,
+    // Never fall through to the user's real ~/.local/share library.
+    XDG_DATA_HOME: join(home, "data"),
+    BORGES_LIBRARY_ROOT: "",
+    ...extra,
   };
 }
 
-async function launch() {
-  return electron.launch({ executablePath, args: [], cwd, env: environment() });
+async function launch(home = profile, extra: Record<string, string> = {}) {
+  return electron.launch({
+    executablePath,
+    args: [],
+    cwd,
+    env: environment(home, extra),
+  });
 }
 
-test("relocated bundled runtime commits SQLite across real process restarts", async () => {
+async function catalogOf(application: ElectronApplication) {
+  const library = await application.firstWindow();
+  await expect(library.getByTestId("library-id")).toHaveText(/^[0-9a-f-]{36}$/);
+  return {
+    library,
+    info: await library.evaluate(() => window.development.getRuntimeInfo()),
+  };
+}
+
+/** Run the packaged executable to completion, capturing its explanation. */
+async function refusedLaunch(env: NodeJS.ProcessEnv) {
+  let stderr = "";
+  const child = spawn(executablePath, [], {
+    cwd,
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  try {
+    await expect.poll(() => child.exitCode, { timeout: 10_000 }).toBe(1);
+    return stderr;
+  } finally {
+    if (child.exitCode === null) child.kill();
+  }
+}
+
+test("relocated runtime keeps one catalog across restarts and a moved root", async () => {
   let application: ElectronApplication | undefined;
+  const libraryRoot = libraryFor(profile);
   try {
     application = await launch();
-    const library = await application.firstWindow();
-    await expect(library.getByTestId("launch-count")).toHaveText("1");
+    const { library, info } = await catalogOf(application);
     expect(library.url()).toBe("borges://app/index.html");
     expect(
       await application.evaluate(({ app }) => ({
@@ -68,23 +109,21 @@ test("relocated bundled runtime commits SQLite across real process restarts", as
       path: join(root, "relocated/resources/app"),
       executable: executablePath,
     });
-    const firstRuntime = await library.evaluate(() =>
-      window.development.getRuntimeInfo(),
-    );
-    expect(firstRuntime).toMatchObject({
+    expect(info).toMatchObject({
       electron: "45.2.1",
       node: "24.22.1",
       sqlite: "3.53.4",
       sandboxed: true,
       contextIsolated: true,
-      database: {
+      catalog: {
         schemaVersion: 1,
-        launchCount: 1,
-        marker: "Borges SQLite runtime probe",
+        root: libraryRoot,
+        created: true,
+        upgradedFrom: null,
+        recoveredStaleLockPid: null,
       },
     });
-    await library.reload();
-    await expect(library.getByTestId("launch-count")).toHaveText("1");
+    const { libraryId } = info.catalog;
     // Exercise the copied workers/engines/assets, not only the shell bundle.
     for (const bookId of ["sample-pdf", "sample-epub"]) {
       const [reader] = await Promise.all([
@@ -118,70 +157,129 @@ test("relocated bundled runtime commits SQLite across real process restarts", as
     await application.close();
     application = undefined;
 
-    const path = join(profile, "runtime-check.sqlite");
-    const database = new DatabaseSync(path);
+    // Independent input written while closed must survive the next startup.
+    const database = new DatabaseSync(join(libraryRoot, "catalog.sqlite"));
     try {
       expect(
-        database.prepare("SELECT launch_count FROM runtime_probe").get()
-          ?.launch_count,
-      ).toBe(1);
-      // Independent input proves startup preserves an existing record.
+        database.prepare("SELECT library_id FROM library").get()?.library_id,
+      ).toBe(libraryId);
       database
-        .prepare("UPDATE runtime_probe SET marker = ?")
+        .prepare(
+          "INSERT INTO sections (id, name, name_key, created_at) VALUES ('s1', ?, 'marker', 1)",
+        )
         .run("Persisted across restart — 蘭");
     } finally {
       database.close();
     }
 
     application = await launch();
-    const reopened = await application.firstWindow();
-    await expect(reopened.getByTestId("launch-count")).toHaveText("2");
-    const restored = await reopened.evaluate(() =>
-      window.development.getRuntimeInfo(),
-    );
-    expect(restored.database).toMatchObject({
-      schemaVersion: 1,
-      launchCount: 2,
-      marker: "Persisted across restart — 蘭",
+    expect((await catalogOf(application)).info.catalog).toMatchObject({
+      libraryId,
+      created: false,
+    });
+    await application.close();
+    application = undefined;
+    const reopened = new DatabaseSync(join(libraryRoot, "catalog.sqlite"), {
+      readOnly: true,
+    });
+    try {
+      expect(reopened.prepare("SELECT name FROM sections").all()).toEqual([
+        { name: "Persisted across restart — 蘭" },
+      ]);
+    } finally {
+      reopened.close();
+    }
+
+    // A closed library copied elsewhere works through explicit configuration
+    // without the original path.
+    const moved = join(profile, "moved/library");
+    await cp(libraryRoot, moved, { recursive: true });
+    await rename(libraryRoot, `${libraryRoot}-original`);
+    application = await launch(profile, { BORGES_LIBRARY_ROOT: moved });
+    expect((await catalogOf(application)).info.catalog).toMatchObject({
+      libraryId,
+      root: moved,
+      created: false,
     });
   } finally {
     await application?.close();
   }
 });
 
+test("another profile cannot share a locked root; a killed holder is recovered", async () => {
+  const other = await mkdtemp(join(root, "other-profile-"));
+  // Both profiles point at the first profile's library root. Different
+  // profiles bypass Electron's single-instance routing, as another build would.
+  const shared = { XDG_DATA_HOME: join(profile, "data") };
+  let holder: ElectronApplication | undefined = await launch();
+  let successor: ElectronApplication | undefined;
+  try {
+    const { library, info } = await catalogOf(holder);
+    const pid = holder.process().pid;
+    const stderr = await refusedLaunch(environment(other, shared));
+    expect(stderr).toContain(
+      `The library at ${libraryFor(profile)} is in use by another Borges process (process ${pid} `,
+    );
+    // The holder is unaffected and still answers through its catalog.
+    expect(
+      (await library.evaluate(() => window.development.getRuntimeInfo()))
+        .catalog.libraryId,
+    ).toBe(info.catalog.libraryId);
+
+    const exited = new Promise((done) => holder?.process().once("exit", done));
+    holder.process().kill("SIGKILL");
+    await exited;
+    holder = undefined;
+    successor = await launch(other, shared);
+    expect((await catalogOf(successor)).info.catalog).toMatchObject({
+      libraryId: info.catalog.libraryId,
+      created: false,
+      recoveredStaleLockPid: pid,
+    });
+  } finally {
+    await holder?.close();
+    await successor?.close();
+  }
+});
+
 for (const scenario of [
   {
     name: "newer schema",
-    sql: "PRAGMA user_version = 2; CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('keep this');",
-    error: "Unsupported runtime diagnostic schema 2",
+    prepare: (database: DatabaseSync) =>
+      database.exec(
+        "PRAGMA user_version = 2; CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('keep this');",
+      ),
+    error: "uses schema 2, but this Borges build supports schema 1 at most",
   },
   {
     name: "damaged supported schema",
-    sql: "PRAGMA user_version = 1; CREATE TABLE unrelated (value TEXT); INSERT INTO unrelated VALUES ('keep this too');",
-    error: "no such table: runtime_probe",
+    prepare: (database: DatabaseSync) =>
+      database.exec("DROP TABLE trash_entries"),
+    catalog: true,
+    error: "does not match schema 1",
+  },
+  {
+    name: "foreign database",
+    prepare: (database: DatabaseSync) =>
+      database.exec(
+        "CREATE TABLE unrelated (value TEXT); INSERT INTO unrelated VALUES ('keep this too');",
+      ),
+    error: "is a populated SQLite database without a Borges schema",
   },
 ]) {
-  test(`packaged startup refuses ${scenario.name} and retains the database`, async () => {
-    const path = join(profile, "runtime-check.sqlite");
+  test(`packaged startup refuses a ${scenario.name} and retains the catalog`, async () => {
+    const libraryRoot = libraryFor(profile);
+    await mkdir(libraryRoot, { recursive: true });
+    if (scenario.catalog) openLibrary({ root: libraryRoot }).close();
+    const path = join(libraryRoot, "catalog.sqlite");
     const database = new DatabaseSync(path);
-    database.exec(scenario.sql);
+    scenario.prepare(database);
     database.close();
     const before = await readFile(path);
-    let stderr = "";
-    const child = spawn(executablePath, [], {
-      cwd,
-      env: environment(),
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    try {
-      await expect.poll(() => child.exitCode, { timeout: 10_000 }).toBe(1);
-      expect(stderr).toContain(scenario.error);
-      expect(await readFile(path)).toEqual(before);
-    } finally {
-      if (child.exitCode === null) child.kill();
-    }
+    const stderr = await refusedLaunch(environment());
+    expect(stderr).toContain("Borges cannot open its library");
+    expect(stderr).toContain(scenario.error);
+    expect(stderr).toContain("It was not changed");
+    expect(await readFile(path)).toEqual(before);
   });
 }

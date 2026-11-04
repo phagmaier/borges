@@ -1,9 +1,10 @@
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { app, ipcMain, net, protocol, session } from "electron";
-import type { RuntimeDatabaseInfo, RuntimeInfo } from "../shared/runtime";
+import type { CatalogInfo, RuntimeInfo } from "../shared/runtime";
+import { type Library, openLibrary } from "../storage/catalog";
+import { resolveLibraryRoot } from "../storage/paths";
 import { resolveServedAsset } from "./assets";
-import { recordRuntimeLaunch } from "./runtime-database";
 import { WindowCoordinator } from "./windows";
 
 const directory = fileURLToPath(new URL(".", import.meta.url));
@@ -32,21 +33,63 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-function runtimeInfo(database: RuntimeDatabaseInfo): RuntimeInfo {
+let library: Library | undefined;
+
+function catalogInfo(opened: Library): CatalogInfo {
+  const sqlite = opened.database
+    .prepare("SELECT sqlite_version() AS version")
+    .get()?.version;
+  return {
+    sqlite: String(sqlite),
+    schemaVersion: opened.schemaVersion,
+    libraryId: opened.libraryId,
+    root: opened.root,
+    created: opened.created,
+    upgradedFrom: opened.upgrade?.from ?? null,
+    recoveredStaleLockPid: opened.recoveredStaleLock?.pid ?? null,
+  };
+}
+
+function runtimeInfo(catalog: CatalogInfo): RuntimeInfo {
   return {
     electron: process.versions.electron,
     chromium: process.versions.chrome,
     node: process.versions.node,
-    sqlite: database.sqlite,
-    database,
+    sqlite: catalog.sqlite,
+    catalog,
   };
+}
+
+/** Lock and open the configured library before any window can request work. */
+function openConfiguredLibrary(): Library {
+  const root = resolveLibraryRoot({
+    explicitRoot: process.env.BORGES_LIBRARY_ROOT,
+    xdgDataHome: process.env.XDG_DATA_HOME,
+    home: app.getPath("home"),
+    // Unpackaged development builds never open the user's real library.
+    developmentProfile: app.isPackaged ? undefined : app.getPath("userData"),
+  });
+  const opened = openLibrary({ root });
+  if (opened.recoveredStaleLock) {
+    console.warn(
+      `Recovered the library lock left by exited process ${opened.recoveredStaleLock.pid}.`,
+    );
+  }
+  if (opened.upgrade) {
+    console.info(
+      `Upgraded the catalog from schema ${opened.upgrade.from} to ${opened.upgrade.to}; snapshot: ${opened.upgrade.snapshot}`,
+    );
+  }
+  return opened;
 }
 
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => windows.beginQuit());
+// Closing the catalog checkpoints its WAL and releases the root lock.
+app.on("will-quit", () => library?.close());
 
-// The development profile scopes Electron's single-instance lock. The future
-// catalog additionally needs an exclusive lock on the configured library root.
+// The profile scopes Electron's single-instance lock, which routes ordinary
+// second launches. The library-root lock excludes any other build or profile.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -62,9 +105,16 @@ if (!app.requestSingleInstanceLock()) {
   app
     .whenReady()
     .then(async () => {
-      const database = recordRuntimeLaunch(
-        join(app.getPath("userData"), "runtime-check.sqlite"),
-      );
+      try {
+        library = openConfiguredLibrary();
+      } catch (error) {
+        console.error(
+          `Borges cannot open its library: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        app.exit(1);
+        return;
+      }
+      const catalog = catalogInfo(library);
       if (
         developmentUrl &&
         !["localhost", "127.0.0.1", "[::1]"].includes(
@@ -103,7 +153,7 @@ if (!app.requestSingleInstanceLock()) {
       );
       ipcMain.handle("development:runtime", (event) => {
         windows.identityFor(event);
-        return runtimeInfo(database);
+        return runtimeInfo(catalog);
       });
       ipcMain.handle("development:window", (event) =>
         windows.identityFor(event),
