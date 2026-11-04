@@ -2,7 +2,9 @@ import { EpubSession } from "../../readers/epub";
 import { PdfSession } from "../../readers/pdf";
 import {
   parseSnapshot,
+  type ReaderLocation,
   type ReaderSession,
+  type Restoration,
   type SearchHit,
 } from "../../readers/session";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -229,6 +231,7 @@ async function size() {
   )
     throw new Error("Font size must be 8–72; zoom must be 0.25–8.");
   await session.setSizing({ fontSize, zoom: value });
+  reportPosition();
 }
 font.onchange = zoom.onchange = () => {
   void run(size);
@@ -265,25 +268,79 @@ element("#restore").onclick = () => {
   });
 };
 let observer: ResizeObserver | undefined;
-async function open() {
+const catalogMode = new URL(location.href).searchParams.has("catalog");
+
+// Catalog books arrive from the parent reader shell, which owns the session
+// and relays positions to the application. This frame never sees session
+// tokens, and it answers only the parent at the origin that opened it.
+interface OpenMessage {
+  type: "borges:open";
+  fileName: string;
+  format: "pdf" | "epub";
+  bytes: ArrayBuffer;
+  location: ReaderLocation | null;
+  sizing: { fontSize: number | null; zoom: number | null };
+}
+let parentOrigin: string | null = null;
+let reporting = false;
+function tellParent(message: object) {
+  if (parentOrigin) window.parent.postMessage(message, parentOrigin);
+}
+function reportPosition() {
+  if (!reporting || disposed) return;
+  tellParent({
+    type: "borges:position",
+    location: session.capture(),
+    sizing: session.sizing,
+  });
+}
+function receiveBook(): Promise<OpenMessage> {
+  return new Promise((resolve) => {
+    const listener = (event: MessageEvent) => {
+      const data = event.data as Partial<OpenMessage> | null;
+      if (
+        event.source !== window.parent ||
+        data?.type !== "borges:open" ||
+        !(data.bytes instanceof ArrayBuffer) ||
+        typeof data.fileName !== "string" ||
+        (data.format !== "pdf" && data.format !== "epub")
+      )
+        return;
+      window.removeEventListener("message", listener);
+      parentOrigin = event.origin;
+      resolve(data as OpenMessage);
+    };
+    window.addEventListener("message", listener);
+    window.parent.postMessage({ type: "borges:ready" }, "*");
+  });
+}
+
+async function fixtureBook(): Promise<{ bytes: ArrayBuffer; name: string }> {
   const filename = fixtures.get(
     new URL(location.href).searchParams.get("book") ?? "",
   );
   if (!filename) throw new Error("Unknown diagnostic fixture.");
   const response = await fetch(`/reader-assets/fixtures/${filename}`);
   if (!response.ok) throw new Error(`Fixture unavailable: ${response.status}`);
-  const bytes = await response.arrayBuffer();
+  return { bytes: await response.arrayBuffer(), name: filename };
+}
+
+async function open() {
+  const book = catalogMode ? await receiveBook() : null;
+  const { bytes, name } = book
+    ? { bytes: book.bytes, name: book.fileName }
+    : await fixtureBook();
   revision = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
-  session = filename.endsWith(".pdf")
-    ? new PdfSession()
-    : new EpubSession(handleKey);
+  const isPdf = book ? book.format === "pdf" : name.endsWith(".pdf");
+  session = isPdf ? new PdfSession() : new EpubSession(handleKey);
   session.addEventListener("relocate", () => {
     element("#location").textContent = session.label;
     element("#visible-text").textContent = session.visibleText;
+    reportPosition();
   });
-  await session.open(new File([bytes], filename), surface);
+  await session.open(new File([bytes], name), surface);
   element("#font-control").hidden = !session.reflowable;
   element("#zoom-control").hidden = session.reflowable;
   element("#fit").hidden = session.reflowable;
@@ -294,10 +351,36 @@ async function open() {
     contents.append(option);
   }
   contents.disabled = !session.contents.length;
+  let restoration: Restoration | "none" = "none";
+  if (book) {
+    const sizing = {
+      fontSize: book.sizing.fontSize ?? session.sizing.fontSize,
+      zoom: book.sizing.zoom ?? session.sizing.zoom,
+    };
+    font.value = String(sizing.fontSize);
+    zoom.value = String(sizing.zoom);
+    await session.setSizing(sizing);
+    if (book.location) restoration = await session.restore(book.location);
+  }
   element("nav").inert = false;
   element("#location").textContent = session.label;
   element("#visible-text").textContent = session.visibleText;
   status.textContent = "Ready";
+  if (book) {
+    tellParent({ type: "borges:opened", restoration });
+    reporting = true;
+    reportPosition();
+    // Pan within a zoomed PDF page is part of its position.
+    let panQueued = false;
+    surface.addEventListener("scroll", () => {
+      if (panQueued) return;
+      panQueued = true;
+      setTimeout(() => {
+        panQueued = false;
+        reportPosition();
+      }, 100);
+    });
+  }
   let queued = false;
   observer = new ResizeObserver(() => {
     if (queued || disposed) return;
@@ -312,6 +395,7 @@ async function open() {
 open().catch(async (reason: unknown) => {
   status.hidden = true;
   report(reason);
+  tellParent({ type: "borges:failed", message: String(reason) });
   await session?.dispose().catch(console.error);
 });
 window.addEventListener("pagehide", () => {

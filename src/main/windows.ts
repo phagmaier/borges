@@ -1,5 +1,13 @@
-import { BrowserWindow, type IpcMainInvokeEvent } from "electron";
-import { type DevelopmentWindow, developmentBooks } from "../shared/windows";
+import {
+  BrowserWindow,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+} from "electron";
+import {
+  type DevelopmentWindow,
+  developmentBooks,
+  engineUrl,
+} from "../shared/windows";
 
 interface WindowEntry {
   window: BrowserWindow;
@@ -8,7 +16,8 @@ interface WindowEntry {
 }
 
 // Own identity and pending opens before loading starts, so concurrent requests
-// cannot create duplicate windows. No book bytes or progress live here yet.
+// cannot create duplicate windows. Progress lives in ReaderSessions; this
+// coordinator reports reader-window closure to it by webContents ID.
 export class WindowCoordinator {
   private readonly entries = new Map<string, WindowEntry>();
   private quitting = false;
@@ -16,13 +25,14 @@ export class WindowCoordinator {
   constructor(
     private readonly shellUrl: string,
     private readonly preloadPath: string,
+    private readonly onReaderClosed: (owner: number) => void = () => {},
   ) {}
 
   beginQuit(): void {
     this.quitting = true;
   }
 
-  identityFor(event: IpcMainInvokeEvent): DevelopmentWindow {
+  identityFor(event: IpcMainInvokeEvent | IpcMainEvent): DevelopmentWindow {
     const entry = [...this.entries.values()].find(
       ({ window }) => window.webContents === event.sender,
     );
@@ -44,7 +54,18 @@ export class WindowCoordinator {
   async openReader(bookId: unknown): Promise<void> {
     const book = developmentBooks.find((candidate) => candidate.id === bookId);
     if (!book) throw new Error("Unknown diagnostic book.");
-    await this.open(`reader:${book.id}`, { kind: "reader", book });
+    await this.open(`reader:${book.id}`, {
+      kind: "reader",
+      book: { ...book, source: "fixture" },
+    });
+  }
+
+  /** Open or focus the one reader for a catalog book (already validated). */
+  async openCatalogReader(book: { id: string; title: string }): Promise<void> {
+    await this.open(`catalog:${book.id}`, {
+      kind: "reader",
+      book: { id: book.id, title: book.title, source: "catalog" },
+    });
   }
 
   private isShellUrl(destination: string): boolean {
@@ -87,27 +108,27 @@ export class WindowCoordinator {
         // Only the registered shell may load its assigned engine. Only that
         // engine may create chapter frames. Book documents cannot navigate
         // themselves, their ancestors, or siblings into another origin/role.
-        const engineUrl =
-          identity.kind === "reader"
-            ? `borges://reader/content.html?book=${identity.book.id}`
-            : null;
+        const engine =
+          identity.kind === "reader" ? engineUrl(identity.book) : null;
         const initiator = event.initiator;
         const allowed = event.isMainFrame
           ? this.isShellUrl(event.url) &&
             (!initiator || initiator === window.webContents.mainFrame)
-          : engineUrl !== null &&
-            ((event.url === engineUrl &&
+          : engine !== null &&
+            ((event.url === engine &&
               event.frame?.parent === window.webContents.mainFrame &&
               (!initiator ||
                 initiator === window.webContents.mainFrame ||
-                initiator.url === engineUrl)) ||
+                initiator.url === engine)) ||
               (event.url.startsWith("blob:borges://reader/") &&
-                event.frame?.parent?.url === engineUrl &&
-                initiator?.url === engineUrl));
+                event.frame?.parent?.url === engine &&
+                initiator?.url === engine));
         if (!allowed) event.preventDefault();
       });
+      const owner = window.webContents.id;
       window.on("closed", () => {
         if (this.entries.get(key)?.window === window) this.entries.delete(key);
+        if (identity.kind === "reader") this.onReaderClosed(owner);
       });
       entry.ready = window.loadURL(this.shellUrl).catch((error: unknown) => {
         if (!window.isDestroyed()) window.destroy();

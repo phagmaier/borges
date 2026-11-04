@@ -71,6 +71,16 @@ if (mode === "hold-lock") {
     },
   });
   throw new Error(`never reached ${step}`);
+} else if (mode === "add-books") {
+  // Add each source as a new book, print {title: bookId}, and exit.
+  const library = openLibrary({ root });
+  const added: Record<string, string> = {};
+  for (const source of extra) {
+    const book = await addFileAsNewBook(library, source);
+    added[book.title] = book.bookId;
+  }
+  library.close();
+  console.log(JSON.stringify(added));
 } else {
   throw new Error(`unknown mode ${mode}`);
 }

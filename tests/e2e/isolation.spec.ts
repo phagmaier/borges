@@ -257,8 +257,9 @@ test("book frames have no bridge and forged/replayed progress messages have no a
     }
   });
   await expect(surface.locator("#location")).toContainText("Chapter 1");
-  // Close/reopen produces a new engine/document. Replayed old messages still
-  // have no receiving authority; durable progress endpoints do not exist yet.
+  // Close/reopen produces a new engine/document. Diagnostic fixture readers
+  // hold no progress session, so replayed messages still have no authority.
+  // Catalog-book sessions are checked in catalog-readers.spec.ts.
   await expect(pdfSurface.locator("#location")).toHaveText("Page 1 of 3");
   await reader.close();
   const [fresh] = await Promise.all([

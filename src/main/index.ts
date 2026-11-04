@@ -1,14 +1,29 @@
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { app, ipcMain, net, protocol, session } from "electron";
+import {
+  app,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+  ipcMain,
+  net,
+  protocol,
+  session,
+  webContents,
+} from "electron";
+import { getBook, queryBooks } from "../library/query";
 import {
   type ReconciliationReport,
   reconcileOperations,
 } from "../library/recovery";
-import type { CatalogInfo, RuntimeInfo } from "../shared/runtime";
+import type { CatalogInfo, OpenedBook, RuntimeInfo } from "../shared/runtime";
 import { type Library, openLibrary } from "../storage/catalog";
-import { resolveLibraryRoot } from "../storage/paths";
+import {
+  resolveExistingLibraryPath,
+  resolveLibraryRoot,
+} from "../storage/paths";
 import { resolveServedAsset } from "./assets";
+import { ReaderSessions } from "./sessions";
 import { WindowCoordinator } from "./windows";
 
 const directory = fileURLToPath(new URL(".", import.meta.url));
@@ -17,9 +32,11 @@ const developmentUrl = app.isPackaged
   ? undefined
   : process.env.ELECTRON_RENDERER_URL;
 const shellUrl = developmentUrl ?? "borges://app/index.html";
+let sessions: ReaderSessions | undefined;
 const windows = new WindowCoordinator(
   shellUrl,
   join(directory, "../preload/index.cjs"),
+  (owner) => sessions?.end(owner),
 );
 
 // The setup shell uses a separate profile and never opens the user's library.
@@ -125,8 +142,54 @@ async function reconcile(
   }
 }
 
+/** The catalog book assigned to the sending reader window, or an error. */
+function assignedCatalogBook(event: IpcMainInvokeEvent | IpcMainEvent): string {
+  const identity = windows.identityFor(event);
+  if (identity.kind !== "reader" || identity.book.source !== "catalog")
+    throw new Error("Only a catalog reader window may do this.");
+  return identity.book.id;
+}
+
+async function openAssignedBook(
+  opened: Library,
+  readers: ReaderSessions,
+  event: IpcMainInvokeEvent,
+): Promise<OpenedBook> {
+  const bookId = assignedCatalogBook(event);
+  const owner = event.sender.id;
+  const book = getBook(opened.database, bookId);
+  const grant = readers.begin(owner, bookId);
+  const revision = opened.database
+    .prepare("SELECT path, original_filename FROM revisions WHERE id = ?")
+    .get(grant.revisionId) as { path: string; original_filename: string };
+  try {
+    const bytes = await readFile(
+      await resolveExistingLibraryPath(opened.root, revision.path),
+    );
+    // A reload or close during the read retires this grant; hand out nothing.
+    if (readers.sessionOf(owner)?.generation !== grant.generation)
+      throw new Error("This reader session was replaced while opening.");
+    return {
+      ...grant,
+      title: book.title,
+      fileName: revision.original_filename,
+      bytes,
+    };
+  } catch (error) {
+    if (readers.sessionOf(owner)?.generation === grant.generation)
+      readers.end(owner);
+    throw new Error(
+      `${book.title} could not be read from the library (${error instanceof Error ? error.message : String(error)}). Its catalog entry is unchanged.`,
+    );
+  }
+}
+
 app.on("window-all-closed", () => app.quit());
-app.on("before-quit", () => windows.beginQuit());
+app.on("before-quit", () => {
+  windows.beginQuit();
+  // Explicit Quit flushes every open reader's position before windows close.
+  sessions?.endAll();
+});
 // Closing the catalog checkpoints its WAL and releases the root lock.
 app.on("will-quit", () => library?.close());
 
@@ -215,6 +278,52 @@ if (!app.requestSingleInstanceLock()) {
         windows.identityFor(event);
         await windows.openLibrary();
       });
+      const opened = library;
+      const interval = Number(process.env.BORGES_SAVE_INTERVAL_MS);
+      const readers = new ReaderSessions(
+        opened.database,
+        (owner, result) => {
+          const target = webContents.fromId(owner);
+          if (target && !target.isDestroyed())
+            target.send("reader:progress-result", result);
+        },
+        // Tests may lengthen the coalescing interval in development builds to
+        // prove that close/Quit flush rather than the timer saved a position.
+        !app.isPackaged && interval > 0 ? { delayMs: interval } : {},
+      );
+      sessions = readers;
+      ipcMain.handle("library:books", (event) => {
+        if (windows.identityFor(event).kind !== "library")
+          throw new Error("Only the library window may list books.");
+        return queryBooks(opened.database, { view: { kind: "all" } });
+      });
+      ipcMain.handle("library:open-book", async (event, bookId: unknown) => {
+        if (windows.identityFor(event).kind !== "library")
+          throw new Error("Readers must be opened from the library.");
+        const book = getBook(opened.database, bookId as string);
+        await windows.openCatalogReader(book);
+      });
+      ipcMain.handle("reader:open-book", (event) =>
+        openAssignedBook(opened, readers, event),
+      );
+      ipcMain.on("reader:progress", (event, report: unknown) => {
+        let owner: number;
+        try {
+          windows.identityFor(event);
+          owner = event.sender.id;
+        } catch {
+          return; // Not a registered application window: no reply channel.
+        }
+        // Binding to the window's own session happens inside `report`.
+        readers.report(owner, report);
+      });
+      ipcMain.handle(
+        "reader:opened",
+        (event, bookId: unknown, generation: unknown) => {
+          assignedCatalogBook(event);
+          readers.opened(event.sender.id, bookId, generation);
+        },
+      );
       ipcMain.handle("development:quit", (event) => {
         windows.identityFor(event);
         // Let the invoke acknowledge before destroying its sender.

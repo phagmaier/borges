@@ -8,6 +8,20 @@ export const developmentBooks = [
 
 export type DevelopmentBook = (typeof developmentBooks)[number];
 
+/** A diagnostic fixture (no saved progress) or a catalog book. */
+export interface ReaderBook {
+  id: string;
+  title: string;
+  source: "fixture" | "catalog";
+}
+
 export type DevelopmentWindow =
   | { kind: "library" }
-  | { kind: "reader"; book: DevelopmentBook };
+  | { kind: "reader"; book: ReaderBook };
+
+/** Engine document assigned to a reader window. */
+export function engineUrl(book: ReaderBook): string {
+  return book.source === "catalog"
+    ? "borges://reader/content.html?catalog"
+    : `borges://reader/content.html?book=${book.id}`;
+}

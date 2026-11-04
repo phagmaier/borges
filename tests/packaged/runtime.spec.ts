@@ -17,6 +17,7 @@ import {
   expect,
   test,
 } from "@playwright/test";
+import { addFileAsNewBook } from "../../src/library/import";
 import { openLibrary } from "../../src/storage/catalog";
 import { catalogMigrations } from "../../src/storage/schema";
 
@@ -327,4 +328,64 @@ test("packaged startup upgrades a schema-1 catalog after a verified snapshot", a
   } finally {
     snapshot.close();
   }
+});
+
+test("packaged readers open a catalog book, save its position and resume it", async () => {
+  const sources = await mkdtemp(join(root, "sources-"));
+  const source = join(sources, "Known PDF.pdf");
+  await cp(resolve("tests/fixtures/known.pdf"), source);
+  const seeded = openLibrary({ root: libraryFor(profile) });
+  const { bookId } = await addFileAsNewBook(seeded, source);
+  seeded.close();
+  const page = () => {
+    const database = new DatabaseSync(
+      join(libraryFor(profile), "catalog.sqlite"),
+      { readOnly: true },
+    );
+    try {
+      return database
+        .prepare(
+          "SELECT p.pdf_page AS page FROM books b JOIN positions p ON p.revision_id = b.current_revision_id WHERE b.id = ?",
+        )
+        .get(bookId)?.page;
+    } finally {
+      database.close();
+    }
+  };
+  async function read(application: ElectronApplication) {
+    const library = await application.firstWindow();
+    const opened = application.waitForEvent("window");
+    await library.getByRole("button", { name: "Read Known PDF" }).click();
+    const reader = await opened;
+    const ui = reader.frameLocator('iframe[title="Book content"]');
+    await expect(ui.getByRole("status")).toHaveText("Ready");
+    return { reader, ui };
+  }
+
+  // The development-only interval override is ignored by packaged builds.
+  let application = await launch(profile, {
+    BORGES_SAVE_INTERVAL_MS: "600000",
+  });
+  try {
+    const { ui } = await read(application);
+    await expect(ui.getByTestId("page-text")).toContainText("ORCHID FIRST");
+    const surface = ui.getByRole("region", { name: "Reading surface" });
+    await surface.focus();
+    await surface.press("ArrowRight");
+    await expect(ui.getByTestId("page-text")).toContainText("CEDAR SECOND");
+    await expect.poll(page, { timeout: 2000 }).toBe(2);
+  } finally {
+    await application.close();
+  }
+  application = await launch(profile);
+  try {
+    const { ui } = await read(application);
+    await expect(ui.getByTestId("page-text")).toContainText("CEDAR SECOND");
+  } finally {
+    await application.close();
+  }
+  // The source file was only read.
+  expect(await readFile(source)).toEqual(
+    await readFile(resolve("tests/fixtures/known.pdf")),
+  );
 });
