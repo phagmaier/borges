@@ -10,6 +10,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -35,9 +36,15 @@ test.beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "borges-packaged-"));
   // Relocate the complete artifact outside the checkout. Runtime has no package
   // manager, source directory, node_modules, or development server to lean on.
-  await cp(resolve("dist/borges-runtime-check"), join(root, "relocated"), {
-    recursive: true,
-  });
+  await cp(
+    resolve(
+      process.env.BORGES_PACKAGED_ARTIFACT || "dist/borges-runtime-check",
+    ),
+    join(root, "relocated"),
+    {
+      recursive: true,
+    },
+  );
   executablePath = join(root, "relocated/borges");
   cwd = join(root, "empty-working-directory");
   await mkdir(cwd);
@@ -64,6 +71,7 @@ function environment(home = profile, extra: Record<string, string> = {}) {
     BORGES_DEV_PROFILE: home,
     // Never fall through to the user's real ~/.local/share library.
     XDG_DATA_HOME: join(home, "data"),
+    XDG_CONFIG_HOME: join(home, "config"),
     BORGES_LIBRARY_ROOT: "",
     ...extra,
   };
@@ -556,6 +564,105 @@ test("packaged readers save/resume, replace across formats and retain the old po
   expect(await readFile(source)).toEqual(
     await readFile(resolve("tests/fixtures/known.pdf")),
   );
+});
+
+test("relocated catalog readers isolate a malicious EPUB while local images and fonts remain usable", async () => {
+  const seeded = openLibrary({ root: libraryFor(profile) });
+  try {
+    await addFileAsNewBook(seeded, resolve("tests/fixtures/malicious.epub"));
+  } finally {
+    seeded.close();
+  }
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url ?? "");
+    response.end("network probe");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  let application: ElectronApplication | undefined;
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No endpoint");
+    const endpoint = `http://127.0.0.1:${address.port}`;
+    await fetch(`${endpoint}/control`);
+    application = await launch();
+    const { reader } = await openCatalogReader(application, "malicious");
+    const chapter = reader
+      .frames()
+      .find((frame) => frame.url().startsWith("blob:borges://reader-catalog-"));
+    const engine = reader
+      .frames()
+      .find((frame) => frame.url().startsWith("borges://reader-catalog-"));
+    if (!chapter || !engine) throw new Error("Missing packaged book frames");
+    await expect(chapter.locator("body")).toContainText("ORCHID EPUB FIRST");
+    await expect(chapter.getByAltText("Coral square")).toBeVisible();
+    expect(
+      await chapter
+        .getByAltText("Coral square")
+        .evaluate(
+          (image: HTMLImageElement) =>
+            image.complete && image.naturalWidth === 24,
+        ),
+    ).toBe(true);
+    expect(
+      await chapter.evaluate(async () => {
+        await document.fonts.ready;
+        return [...document.fonts].some(
+          (font) => font.family === "Fixture" && font.status === "loaded",
+        );
+      }),
+    ).toBe(true);
+    for (const frame of [engine, chapter]) {
+      expect(
+        await frame.evaluate(() => ({
+          bridge: typeof Reflect.get(window, "borges"),
+          node: typeof Reflect.get(window, "require"),
+          script: Reflect.get(window, "bookScriptRan"),
+        })),
+      ).toEqual({ bridge: "undefined", node: "undefined", script: undefined });
+    }
+    expect(
+      await chapter.evaluate(async (url) => {
+        try {
+          await fetch(`${url}/book`);
+          return "allowed";
+        } catch {
+          return "denied";
+        }
+      }, endpoint),
+    ).toBe("denied");
+    expect(
+      await application.evaluate(async ({ net }, url) => {
+        try {
+          await net.fetch(`${url}/main`);
+          return "allowed";
+        } catch {
+          return "denied";
+        }
+      }, endpoint),
+    ).toBe("denied");
+    const before = chapter.url();
+    await chapter.locator("#external").click();
+    const reference = reader.getByRole("dialog", {
+      name: "External reference",
+    });
+    await expect(reference).toBeVisible();
+    await reference.getByRole("button", { name: "Close", exact: true }).click();
+    for (const id of ["shell", "file", "data", "download"])
+      await chapter.locator(`#${id}`).click();
+    expect(chapter.url()).toBe(before);
+    expect(reader.url()).toBe("borges://app/index.html");
+    expect(application.windows()).toHaveLength(2);
+    expect(requests).toEqual(["/control"]);
+    await reader.screenshot({
+      path: test.info().outputPath("packaged-malicious-reader.png"),
+    });
+  } finally {
+    if (application) await application.close();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 });
 
 test("imports and extracts offline from the relocated bundle and retains extracted/manual provenance after restart", async () => {

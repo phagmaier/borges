@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+# Resolve the complete application directory, including invocation via a symlink.
+application_dir=$(dirname -- "$(readlink -f -- "$0")")
+unset ELECTRON_RUN_AS_NODE NODE_OPTIONS NODE_PATH ELECTRON_RENDERER_URL BORGES_DEV_PROFILE
+
+if [ "${1-}" = --library-root ]; then
+  if [ "$#" -lt 2 ]; then
+    echo 'Usage: launch [--library-root /absolute/folder] [--install-desktop]' >&2
+    exit 64
+  fi
+  case "$2" in
+    /*) BORGES_LIBRARY_ROOT=$2; export BORGES_LIBRARY_ROOT ;;
+    *) echo 'The library folder must be an absolute path.' >&2; exit 64 ;;
+  esac
+  shift 2
+fi
+
+if [ "${1-}" = --install-desktop ]; then
+  [ "$#" -eq 1 ] || { echo '--install-desktop takes no arguments.' >&2; exit 64; }
+  # Use the bundled Node runtime for registration; no installed Node is needed.
+  ELECTRON_RUN_AS_NODE=1 exec "$application_dir/borges" "$application_dir/install-desktop.cjs"
+fi
+exec "$application_dir/borges" "$@"

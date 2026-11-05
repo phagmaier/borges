@@ -1,8 +1,27 @@
 # Borges
 
-A planned personal, fully offline PDF/EPUB library manager and reader for Arch Linux. Organize books in overlapping nested sections, find them by author/subject, track reading status, and read in separate single-page windows.
+A personal, fully offline PDF/EPUB library and single-page reader for Arch Linux. Import copies your originals, organize books in overlapping nested sections, search metadata, track status/Archive, and read in independent windows with saved positions. Replacement and Trash retain old bytes and locations until you purge.
 
-Status: development build, not yet a usable personal release. Verified: the multi-window Electron shell (reopening a reader requests activation, which this Hyprland policy answers with an urgency hint, a recorded platform limit); offline PDF/EPUB rendering, interaction and isolation; the versioned, locked SQLite catalog with migrations and startup reconciliation; catalog readers with centrally coordinated autosave; A13 measurements with a 500-entry catalog; and the library window (browsing, search/filters, sections, status/Archive and metadata editing). Import, replacement, Trash, covers and the reader's final controls are pending. Borges is the project name. The accepted stack is TypeScript, React/CSS, Electron, SQLite, PDF.js, and pinned foliate-js.
+The agreed personal baseline is complete: all six milestones and the fresh-seeded 500-book release measurements pass. See the handoff and development evidence for exact checks and limits. The target is Arch/Hyprland/Wayland at scale 1. Reopening requests activation; this compositor policy may answer with urgency, requiring one click to focus. The accepted stack is TypeScript, React/CSS, Electron, SQLite, PDF.js, and pinned foliate-js.
+
+## Build and use
+
+```sh
+mise trust
+mise install node pnpm
+mise run setup
+mise run package
+./dist/borges/launch
+```
+
+The complete `dist/borges` directory contains Electron/readers, a launch script, desktop entry/installer, user guide, build information and notices. Move the whole directory together. Runtime use needs no Node, pnpm, checkout or network service. Setup needs network access for uncached dependencies.
+
+```sh
+./dist/borges/launch --install-desktop
+./dist/borges/launch --library-root '/absolute/path/to/My Library'
+```
+
+See the [user guide](docs/user-guide.md) for desktop registration, controls, library-root configuration, closed-folder backup/restore, Trash and runtime prerequisites. Default library: `~/.local/share/borges/library`, respecting XDG_DATA_HOME. The personal profile is separate from development.
 
 ## Development
 
@@ -11,7 +30,8 @@ mise run dev
 mise run check
 mise run smoke
 mise run smoke-packaged
-mise run measure
+mise run smoke-delivery
+mise run measure-delivery
 ```
 
 See [development setup](docs/development.md) for installation, exact versions, system dependencies, verification results, and individual commands. For a fresh checkout, run `mise trust`, `mise install node pnpm`, then `mise run setup`.
@@ -24,4 +44,4 @@ See [development setup](docs/development.md) for installation, exact versions, s
 - [Agent instructions](AGENTS.md): how an implementation agent should work in this repository.
 - [Stack decision](docs/adr/0001-desktop-stack.md) and [source-backed research](docs/stack-research.md): rationale and trade-offs.
 
-Implementation continues in milestone three (covers, startup problems in a window, and visual prototypes for the user's feedback). The implementation plan's "Where to resume" entry lists the next tasks and working notes. Appearance is provisional until those prototypes.
+Development and the diagnostic artifact retain created fixture readers; the personal bundle omits diagnostic fixtures. Run native GUI suites serially. Public/AUR/AppImage distribution, Calibre migration and cloud features remain outside this personal version. No original source books are bundled.

@@ -1,13 +1,29 @@
-import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  chmod,
+  cp,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
-// Minimal Linux diagnostic artifact, using Electron's documented resources/app
-// layout. Full personal-delivery launchers/desktop integration remain M6.
+// Both artifacts use the same compiled app and pinned runtime. Diagnostic
+// packaging keeps fixtures; personal delivery adds the offline launch tools.
 if (process.platform !== "linux") throw new Error("This spike targets Linux.");
+const personal = process.argv[2] === "--personal";
+if (process.argv.length > (personal ? 3 : 2))
+  throw new Error("usage: package-runtime.ts [--personal]");
 const require = createRequire(import.meta.url);
 const root = resolve(import.meta.dirname, "..");
-const destination = join(root, "dist/borges-runtime-check");
+const destination = join(
+  root,
+  personal ? "dist/borges" : "dist/borges-runtime-check",
+);
 const electronRoot = dirname(require("electron") as string);
 const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 
@@ -22,7 +38,7 @@ await writeFile(
   join(application, "package.json"),
   `${JSON.stringify(
     {
-      name: "borges-runtime-check",
+      name: personal ? "borges" : "borges-runtime-check",
       version: manifest.version,
       type: "module",
       main: "./out/main/index.js",
@@ -46,4 +62,69 @@ for (const name of ["react", "react-dom", "scheduler"]) {
       : require.resolve(`${name}/package.json`);
   await cp(join(dirname(path), "LICENSE"), join(notices, `${name}.LICENSE`));
 }
-console.log(`Bundled diagnostic runtime: ${destination}/borges`);
+// foliate's minified ZIP helpers omit their upstream notice headers; retain
+// the corresponding license texts alongside the shell notices in both builds.
+await cp(join(root, "packaging/licenses"), notices, { recursive: true });
+await cp(
+  join(root, "node_modules/pdfjs-dist/LICENSE"),
+  join(application, "out/renderer/reader-assets/foliate/vendor/pdfjs/LICENSE"),
+);
+if (personal) {
+  await rm(join(application, "out/renderer/reader-assets/fixtures"), {
+    recursive: true,
+    force: true,
+  });
+  for (const name of [
+    "launch",
+    "install-desktop.cjs",
+    "borges.svg",
+    "THIRD_PARTY.md",
+  ])
+    await cp(join(root, "packaging", name), join(destination, name));
+  await chmod(join(destination, "launch"), 0o755);
+  await cp(join(root, "docs/user-guide.md"), join(destination, "README.md"));
+  await writeFile(
+    join(destination, "borges.desktop"),
+    execFileSync(
+      process.execPath,
+      [join(destination, "install-desktop.cjs"), "--print"],
+      { env: { ...process.env, BORGES_LIBRARY_ROOT: "" }, encoding: "utf8" },
+    ),
+  );
+  await writeFile(
+    join(destination, "BUILD-INFO.json"),
+    `${JSON.stringify(
+      {
+        application: "Borges",
+        version: manifest.version,
+        electron: manifest.devDependencies.electron,
+        pdfjs: manifest.dependencies["pdfjs-dist"],
+        foliate: execFileSync(
+          "git",
+          ["-C", join(root, "vendor/foliate-js"), "rev-parse", "HEAD"],
+          { encoding: "utf8" },
+        ).trim(),
+        foliateVendorSha256: Object.fromEntries(
+          await Promise.all(
+            ["zip.js", "fflate.js"].map(async (name) => [
+              name,
+              createHash("sha256")
+                .update(
+                  await readFile(join(root, "vendor/foliate-js/vendor", name)),
+                )
+                .digest("hex"),
+            ]),
+          ),
+        ),
+        lockfileSha256: createHash("sha256")
+          .update(await readFile(join(root, "pnpm-lock.yaml")))
+          .digest("hex"),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+console.log(
+  `Bundled ${personal ? "personal application" : "diagnostic runtime"}: ${destination}/${personal ? "launch" : "borges"}`,
+);

@@ -92,7 +92,11 @@ test.beforeAll(async () => {
   await mkdir(resolve("dist"), { recursive: true });
   root = await mkdtemp(resolve("dist/measure-"));
   const artifact = join(root, "borges");
-  await cp(resolve("dist/borges-runtime-check"), artifact, { recursive: true });
+  const source = resolve(
+    process.env.BORGES_MEASURE_ARTIFACT || "dist/borges-runtime-check",
+  );
+  await cp(source, artifact, { recursive: true });
+  report.artifact = source;
   executablePath = join(artifact, "borges");
   libraryRoot = join(root, "library");
   // Development shortcut: a closed library previously built from this plan
@@ -163,6 +167,7 @@ async function launch(profile: string, library = "") {
       ELECTRON_RUN_AS_NODE: "",
       ELECTRON_RENDERER_URL: "",
       BORGES_DEV_PROFILE: profile,
+      XDG_CONFIG_HOME: join(profile, "config"),
       // Keep the packaged default library inside the measurement profile.
       XDG_DATA_HOME: join(profile, "data"),
       BORGES_LIBRARY_ROOT: library,

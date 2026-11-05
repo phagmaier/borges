@@ -52,6 +52,7 @@ export interface CatalogInfo {
 }
 
 export interface RuntimeInfo {
+  diagnostic: boolean;
   electron: string;
   chromium: string;
   node: string;

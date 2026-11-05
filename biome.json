@@ -5,6 +5,7 @@
       "src/**",
       "tests/**",
       "scripts/*.ts",
+      "packaging/*.cjs",
       "*.ts",
       "*.json",
       "!pnpm-lock.yaml"

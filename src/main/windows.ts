@@ -36,6 +36,7 @@ export class WindowCoordinator {
     private readonly captureReader: (
       owner: number,
     ) => Promise<void> = async () => {},
+    private readonly diagnostic = true,
   ) {}
 
   async prepareQuit(): Promise<boolean> {
@@ -205,8 +206,10 @@ export class WindowCoordinator {
       const window = new BrowserWindow({
         title:
           identity.kind === "library"
-            ? "Borges — development"
-            : `${identity.book.title} — reader shell`,
+            ? this.diagnostic
+              ? "Borges — development"
+              : "Borges"
+            : `${identity.book.title} — ${this.diagnostic ? "reader shell" : "Borges"}`,
         width: 1000,
         height: 720,
         show: false,

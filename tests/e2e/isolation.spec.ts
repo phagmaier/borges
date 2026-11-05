@@ -1,27 +1,26 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { openCatalogReader } from "./catalog";
 import { expect, test } from "./desktop";
 
-// Substitute bytes at the existing diagnostic fixture boundary. The product
-// does not gain an arbitrary file loader for this test.
-test("adversarial EPUB cannot execute scripts or navigate out of the book", async ({
+test.use({
+  catalog: {
+    books: [
+      { fixture: "malicious.epub", name: "Malicious EPUB.epub" },
+      { fixture: "reflowable.epub", name: "Reflowable EPUB.epub" },
+    ],
+  },
+});
+
+test("catalog adversarial EPUB cannot execute scripts or navigate out of the book", async ({
   application,
 }) => {
-  const bytes = await readFile("tests/fixtures/malicious.epub");
-  await application
-    .context()
-    .route("**/reader-assets/fixtures/reflowable.epub", (route) =>
-      route.fulfill({ body: bytes, contentType: "application/epub+zip" }),
-    );
-  const library = await application.firstWindow();
-  const [reader] = await Promise.all([
-    application.waitForEvent("window"),
-    library.evaluate(() => window.development.openReader("sample-epub")),
-  ]);
-  const surface = reader.frameLocator('iframe[title="Book content"]');
-  await expect(surface.getByRole("status")).toHaveText("Ready");
+  const { reader, ui: surface } = await openCatalogReader(
+    application,
+    "Malicious EPUB",
+  );
   const engine = reader
     .frames()
     .find((frame) => frame.url().startsWith("borges://reader-"));
@@ -105,8 +104,12 @@ test("real protocol serving confines decoded paths and file/directory symlinks",
 }) => {
   // Launch can return before main has installed the protocol/offline handlers.
   // Exercise that boundary only once the normal startup has completed.
-  const library = await application.firstWindow();
-  await expect(library.getByTestId("library-id")).toHaveText(/^[0-9a-f-]{36}$/);
+  const { reader } = await openCatalogReader(application, "Reflowable EPUB");
+  const engine = reader
+    .frames()
+    .find((frame) => frame.url().startsWith("borges://reader-catalog-"));
+  if (!engine) throw new Error("Missing catalog engine");
+  const origin = `borges://${new URL(engine.url()).host}`;
   const temporary = await mkdtemp(join(tmpdir(), "borges-escape-"));
   const name = `isolation-${process.pid}`;
   const assets = resolve("out/renderer/assets");
@@ -118,22 +121,25 @@ test("real protocol serving confines decoded paths and file/directory symlinks",
       resolve("out/renderer/index.html"),
       join(assets, `${name}-shell`),
     );
-    const responses = await application.evaluate(async ({ net }, prefix) => {
-      const urls = [
-        `borges://reader-fixture-sample-pdf.reader/assets/${prefix}`,
-        `borges://app/assets/${prefix}`,
-        `borges://reader-fixture-sample-pdf.reader/assets/${prefix}-dir/secret`,
-        `borges://reader-fixture-sample-pdf.reader/assets/${prefix}-shell`,
-        "borges://reader-fixture-sample-pdf.reader/assets/..%2findex.html",
-        "borges://reader-fixture-sample-pdf.reader/reader-assets/..%2f..%2f..%2fetc/passwd",
-      ];
-      return Promise.all(
-        urls.map(async (url) => {
-          const response = await net.fetch(url);
-          return { status: response.status, text: await response.text() };
-        }),
-      );
-    }, name);
+    const responses = await application.evaluate(
+      async ({ net }, { prefix, origin }) => {
+        const urls = [
+          `${origin}/assets/${prefix}`,
+          `borges://app/assets/${prefix}`,
+          `${origin}/assets/${prefix}-dir/secret`,
+          `${origin}/assets/${prefix}-shell`,
+          `${origin}/assets/..%2findex.html`,
+          `${origin}/reader-assets/..%2f..%2f..%2fetc/passwd`,
+        ];
+        return Promise.all(
+          urls.map(async (url) => {
+            const response = await net.fetch(url);
+            return { status: response.status, text: await response.text() };
+          }),
+        );
+      },
+      { prefix: name, origin },
+    );
     for (const response of responses)
       expect(response).toEqual({ status: 403, text: "" });
   } finally {
@@ -168,14 +174,10 @@ test("offline session denies network requests before they reach a real endpoint"
       }
     }, endpoint);
     expect(result).toContain("ERR_BLOCKED_BY_CLIENT");
-    const library = await application.firstWindow();
-    const [reader] = await Promise.all([
-      application.waitForEvent("window"),
-      library.evaluate(() => window.development.openReader("sample-epub")),
-    ]);
-    await expect(
-      reader.frameLocator('iframe[title="Book content"]').getByRole("status"),
-    ).toHaveText("Ready");
+    const { library, reader } = await openCatalogReader(
+      application,
+      "Reflowable EPUB",
+    );
     const chapter = reader
       .frames()
       .find((frame) => frame.url().startsWith("blob:borges://reader-"));
@@ -294,16 +296,13 @@ test("book frames have no bridge and forged/replayed progress messages have no a
   ).toContainText("Chapter 1");
 });
 
-test("reader subframes cannot replace their assigned engine via navigation", async ({
+test("catalog reader subframes cannot replace their assigned engine via navigation", async ({
   application,
 }) => {
-  const library = await application.firstWindow();
-  const [reader] = await Promise.all([
-    application.waitForEvent("window"),
-    library.evaluate(() => window.development.openReader("sample-epub")),
-  ]);
-  const surface = reader.frameLocator('iframe[title="Book content"]');
-  await expect(surface.getByRole("status")).toHaveText("Ready");
+  const { reader, ui: surface } = await openCatalogReader(
+    application,
+    "Reflowable EPUB",
+  );
   const engine = reader
     .frames()
     .find((frame) => frame.url().startsWith("borges://reader-"));

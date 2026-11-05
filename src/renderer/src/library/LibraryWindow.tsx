@@ -468,19 +468,21 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
           </>
         )}
         <footer className="development">
-          <h2>Development</h2>
+          <h2>{runtime?.diagnostic ? "Development" : "Borges"}</h2>
           <div className="actions">
-            {developmentBooks.map((book) => (
-              <button
-                key={book.id}
-                type="button"
-                onClick={() =>
-                  development(window.development.openReader(book.id))
-                }
-              >
-                Open {book.title}
-              </button>
-            ))}
+            {runtime?.diagnostic
+              ? developmentBooks.map((book) => (
+                  <button
+                    key={book.id}
+                    type="button"
+                    onClick={() =>
+                      development(window.development.openReader(book.id))
+                    }
+                  >
+                    Open {book.title}
+                  </button>
+                ))
+              : null}
             <button
               type="button"
               onClick={() => development(window.development.quit())}
@@ -489,21 +491,27 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
             </button>
           </div>
           <details>
-            <summary>Runtime diagnostics</summary>
+            <summary>
+              {runtime?.diagnostic ? "Runtime diagnostics" : "Library details"}
+            </summary>
             {runtime ? (
               <dl>
-                <dt>Electron</dt>
-                <dd>{runtime.electron}</dd>
-                <dt>Chromium</dt>
-                <dd>{runtime.chromium}</dd>
-                <dt>Embedded Node</dt>
-                <dd>{runtime.node}</dd>
-                <dt>SQLite</dt>
-                <dd data-testid="sqlite-version">{runtime.sqlite}</dd>
-                <dt>Catalog schema</dt>
-                <dd data-testid="schema-version">
-                  {runtime.catalog.schemaVersion}
-                </dd>
+                {runtime.diagnostic ? (
+                  <>
+                    <dt>Electron</dt>
+                    <dd>{runtime.electron}</dd>
+                    <dt>Chromium</dt>
+                    <dd>{runtime.chromium}</dd>
+                    <dt>Embedded Node</dt>
+                    <dd>{runtime.node}</dd>
+                    <dt>SQLite</dt>
+                    <dd data-testid="sqlite-version">{runtime.sqlite}</dd>
+                    <dt>Catalog schema</dt>
+                    <dd data-testid="schema-version">
+                      {runtime.catalog.schemaVersion}
+                    </dd>
+                  </>
+                ) : null}
                 <dt>Library identity</dt>
                 <dd data-testid="library-id">{runtime.catalog.libraryId}</dd>
                 <dt>Library folder</dt>

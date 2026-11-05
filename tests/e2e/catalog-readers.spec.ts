@@ -191,7 +191,9 @@ test.describe("flushing", () => {
     const exited = new Promise((done) =>
       application.process().once("exit", done),
     );
-    await again.reader.evaluate(() => window.development.quit());
+    await again.reader
+      .getByRole("button", { name: "Quit application", exact: true })
+      .click();
     await exited;
     expect(stored(profile, pdf).page).toBe(3);
   });

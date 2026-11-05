@@ -35,6 +35,11 @@ import { showStartupFailure } from "./startup";
 import { WindowCoordinator } from "./windows";
 
 const directory = fileURLToPath(new URL(".", import.meta.url));
+const diagnostic = !app.isPackaged || app.getName() === "borges-runtime-check";
+if (!diagnostic) {
+  app.setName("Borges");
+  app.setDesktopName("borges.desktop");
+}
 const rendererRoot = resolve(directory, "../renderer");
 const developmentUrl = app.isPackaged
   ? undefined
@@ -52,14 +57,18 @@ const windows = new WindowCoordinator(
     if (contents && !contents.isDestroyed() && sessions?.sessionOf(owner))
       await readerDrain.request(contents);
   },
+  diagnostic,
 );
 
 // The setup shell uses a separate profile and never opens the user's library.
 app.setPath(
   "userData",
   resolve(
-    process.env.BORGES_DEV_PROFILE ??
-      join(app.getPath("appData"), "borges-development"),
+    (diagnostic ? process.env.BORGES_DEV_PROFILE : undefined) ??
+      join(
+        app.getPath("appData"),
+        diagnostic ? "borges-development" : "borges",
+      ),
   ),
 );
 protocol.registerSchemesAsPrivileged([
@@ -100,6 +109,7 @@ function catalogInfo(
 
 function runtimeInfo(catalog: CatalogInfo): RuntimeInfo {
   return {
+    diagnostic,
     electron: process.versions.electron,
     chromium: process.versions.chrome,
     node: process.versions.node,
@@ -353,6 +363,10 @@ if (!app.requestSingleInstanceLock()) {
           if (windows.identityFor(event).kind !== "library") {
             throw new Error("Readers must be opened from the library.");
           }
+          if (!diagnostic)
+            throw new Error(
+              "Diagnostic books are unavailable in the personal application.",
+            );
           await windows.openReader(bookId);
         },
       );

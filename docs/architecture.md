@@ -54,6 +54,8 @@ Primary references: [Electron process model](https://www.electronjs.org/docs/lat
 
 Diagnostic fixture readers still use bundled allowlisted fixtures and hold no progress session; catalog readers receive their bytes over IPC as described above. Canonical bundle paths, assigned frame navigation and malicious-content checks are verified in [M1-05 evidence](development.md#adversarial-readerresource-isolation-m1-05). Sender/revision/generation/sequence validation for catalog readers is verified natively by M2-05; cover grants remain for the library UI.
 
+Personal delivery (`mise run package`) uses the same built main/preload/readers as the diagnostic artifact. Its trusted package manifest is named `borges`; the diagnostic manifest remains `borges-runtime-check`. Main selects the diagnostic controls/fixture endpoint only for unpackaged or diagnostic builds. Personal builds omit fixture bytes, use the `borges` runtime profile under Electron's app-data/config directory, and keep durable data in the separately configured library root. The launch script clears development/Node overrides and can select an absolute library root; the desktop installer uses bundled Node and writes a per-user launcher, without a runtime server or new application bridge. See the [user guide](user-guide.md) and [delivery evidence](development.md#personal-arch-delivery-m6).
+
 ## Library service (M2-04)
 
 `src/library/query.ts`, `sections.ts` and `books.ts` implement the library service against the catalog; inputs are validated as untrusted and failures are typed `LibraryError`s (`invalid`, `unknown-book`, `unknown-section`, `name-conflict`, `section-cycle`, `storage-failed`). Writes run in one `BEGIN IMMEDIATE` transaction.
