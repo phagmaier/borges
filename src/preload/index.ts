@@ -97,6 +97,7 @@ const borges: BorgesApi = {
     },
   },
   reader: {
+    copyLink: (address) => ipcRenderer.invoke("reader:copy-link", address),
     openBook: () => ipcRenderer.invoke("reader:open-book"),
     reportProgress: (report) => ipcRenderer.send("reader:progress", report),
     bookOpened: (bookId, generation) =>

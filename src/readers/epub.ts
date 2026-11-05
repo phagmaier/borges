@@ -1,3 +1,4 @@
+import { externalLink } from "../shared/links";
 import {
   type ContentsItem,
   panPosition,
@@ -211,9 +212,48 @@ export class EpubSession extends EventTarget implements ReaderSession {
     this.view.addEventListener("external-link", (event) =>
       event.preventDefault(),
     );
+    this.view.addEventListener("link", (event) => {
+      event.preventDefault();
+      const href = (event as CustomEvent<{ href: string }>).detail.href;
+      const resolved = book.resolveHref(href);
+      if (resolved && book.sections[resolved.index])
+        this.dispatchEvent(
+          new CustomEvent<ReaderLocation>("navigate", {
+            detail: {
+              format: "epub",
+              cfi: href,
+              section: resolved.index,
+              fraction: 0,
+              x: 0,
+              y: 0,
+            },
+          }),
+        );
+    });
     this.view.addEventListener("load", (event) => {
       const { doc } = (event as CustomEvent<{ doc: Document }>).detail;
       doc.addEventListener("keydown", this.onKey);
+      doc.addEventListener(
+        "click",
+        (event) => {
+          const anchor = (event.target as Element | null)?.closest("a");
+          const href =
+            anchor?.getAttribute("href") ??
+            anchor?.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+          if (!href || !/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(href.trim()))
+            return;
+          // Catch protocol-relative URLs as well as ordinary absolute links,
+          // before the upstream reader can interpret them as book navigation.
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const link = externalLink(href);
+          if (link)
+            this.dispatchEvent(
+              new CustomEvent("external-link", { detail: link }),
+            );
+        },
+        { capture: true },
+      );
       if (this.view?.isFixedLayout)
         doc.addEventListener(
           "wheel",

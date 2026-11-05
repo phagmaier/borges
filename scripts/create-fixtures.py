@@ -17,7 +17,7 @@ def chunk(kind, data):
 png += chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
 png += chunk(b'IDAT', zlib.compress(b''.join(b'\0' + pixels[y*w*3:(y+1)*w*3] for y in range(h)))) + chunk(b'IEND', b'')
 
-def pdf(name, scanned=False, metadata=False, password=None):
+def pdf(name, scanned=False, metadata=False, password=None, corpus=False):
     objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'']
     def add(x):
         objects.append(x)
@@ -25,12 +25,16 @@ def pdf(name, scanned=False, metadata=False, password=None):
     font = add(b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
     image = add(b'<< /Type /XObject /Subtype /Image /Width 24 /Height 24 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length ' + str(len(pixels)).encode() + b' >>\nstream\n' + pixels + b'\nendstream')
     pages = []
-    for marker in ([''] if scanned else ['ORCHID FIRST', 'CEDAR SECOND', 'HARBOR THIRD']):
+    markers = ['PORTRAIT GARDEN', 'LANDSCAPE CEDAR', 'ROTATED HARBOR', 'CROPPED ORCHID'] if corpus else ([''] if scanned else ['ORCHID FIRST', 'CEDAR SECOND', 'HARBOR THIRD'])
+    for index, marker in enumerate(markers):
         content = b'q 96 0 0 96 40 70 cm /Im1 Do Q\n'
         if marker:
             content += f'BT /F1 20 Tf 40 240 Td ({marker}) Tj ET\nBT /F1 12 Tf 40 210 Td (lantern lantern) Tj ET\n'.encode()
+        if corpus and index == 0:
+            content += b'BT /F1 12 Tf 40 185 Td (External garden reference) Tj ET\nBT /F1 12 Tf 40 160 Td (Mail the gardener) Tj ET\n'
         stream = add(b'<< /Length ' + str(len(content)).encode() + b' >>\nstream\n' + content + b'endstream')
-        pages.append(add(f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 320 320] /Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {image} 0 R >> >> /Contents {stream} 0 R >>'.encode()))
+        geometry = [' /MediaBox [0 0 320 460]', ' /MediaBox [0 0 520 320]', ' /MediaBox [0 0 320 460] /Rotate 90', ' /MediaBox [0 0 500 500] /CropBox [20 20 300 400]'][index] if corpus else ' /MediaBox [0 0 320 320]'
+        pages.append(add(f'<< /Type /Page /Parent 2 0 R{geometry} /Resources << /Font << /F1 {font} 0 R >> /XObject << /Im1 {image} 0 R >> >> /Contents {stream} 0 R >>'.encode()))
     objects[1] = f'<< /Type /Pages /Count {len(pages)} /Kids [{" ".join(f"{p} 0 R" for p in pages)}] >>'.encode()
     if not scanned:
         outline_root = add(b'')
@@ -39,6 +43,13 @@ def pdf(name, scanned=False, metadata=False, password=None):
         objects[0] = f'<< /Type /Catalog /Pages 2 0 R /Outlines {outline_root} 0 R >>'.encode()
         link = add(f'<< /Type /Annot /Subtype /Link /Rect [40 238 260 265] /Border [0 0 0] /Dest [{pages[1]} 0 R /Fit] >>'.encode())
         objects[pages[0]-1] = objects[pages[0]-1][:-3] + f' /Annots [{link} 0 R] >>'.encode()
+        if corpus:
+            # Named and explicit destinations plus ordinary URI annotations.
+            objects[link-1] = objects[link-1].replace(f'[{pages[1]} 0 R /Fit]'.encode(), b'(landscape)')
+            external = add(b'<< /Type /Annot /Subtype /Link /Rect [40 181 220 199] /A << /S /URI /URI (https://example.invalid/garden?q=cedar#leaf) >> >>')
+            mail = add(b'<< /Type /Annot /Subtype /Link /Rect [40 156 220 174] /A << /S /URI /URI (mailto:gardener@example.invalid) >> >>')
+            objects[pages[0]-1] = objects[pages[0]-1].replace(f'/Annots [{link} 0 R]'.encode(), f'/Annots [{link} 0 R {external} 0 R {mail} 0 R]'.encode())
+            objects[0] = objects[0][:-3] + f' /Names << /Dests << /Names [(landscape) [{pages[1]} 0 R /Fit]] >> >> >>'.encode()
     info = ''
     if metadata:
         info_id = add(b'<< /Title (Garden Atlas) /Author (Zora; Ana) /Subject (Maps) /Keywords (Travel; MAPS) >>')
@@ -87,6 +98,7 @@ def pdf(name, scanned=False, metadata=False, password=None):
 
 pdf('known.pdf')
 pdf('image-only.pdf', True)
+pdf('reader-corpus.pdf', corpus=True)
 font_path = ROOT / 'node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf'
 identifier = 'urn:uuid:9c31d3ee-13a4-4f04-bf27-155d15d53aef'
 for name, fixed, obfuscated in [('reflowable.epub', False, False), ('fixed.epub', True, False), ('obfuscated.epub', False, True)]:
@@ -120,6 +132,51 @@ with ZipFile(OUT / 'reflowable.epub') as original, ZipFile(OUT / 'reader-control
         if item.filename == 'one.xhtml':
             data = data.replace(b'<body>', b'<body><ul tabindex="0" aria-label="Chapter index"><li>Reader list focus</li></ul><div role="dialog" tabindex="0" aria-label="Publisher dialog"><p>Publisher dialog focus</p></div>')
         controls.writestr(item, data)
+
+# A nested-path EPUB 3 with large type, anchors/footnotes, Unicode, a local
+# obfuscated font and both raster/vector illustrations. No remote resources.
+with ZipFile(OUT / 'obfuscated.epub') as original, ZipFile(OUT / 'reader-corpus.epub', 'w', compression=ZIP_STORED) as corpus:
+    for item in original.infolist():
+        data = original.read(item.filename)
+        name = item.filename
+        if name in ['book.opf', 'nav.xhtml']:
+            data = data.replace(b'one.xhtml', b'Text/Chapter%20One.xhtml').replace(b'two.xhtml', b'Text/Chapter%20Two.xhtml')
+        if name == 'book.opf':
+            data = data.replace(b'</manifest>', b'<item id="vector" href="garden.svg" media-type="image/svg+xml"/></manifest>')
+        if name in ['one.xhtml', 'two.xhtml']:
+            data = data.replace(b'url(font.ttf)', b'url(../font.ttf)').replace(b'src="coral.png"', b'src="../coral.png"')
+            data = data.replace(b'body {font-family:Fixture}', b'body {font-family:Fixture; font-size:32px} p {line-height:1.4}')
+            if name == 'one.xhtml':
+                data = data.replace(b'<body>', '''<body><p id="opening">GARDEN COPY: café, naïve, Ω.</p>
+<p><a href="Chapter%20Two.xhtml#harbor-note">Across to Harbor</a></p>
+<p><a href="#garden-note">Garden footnote</a></p>
+<p><a href="https://example.invalid/garden?q=cedar#leaf" target="_blank" ping="https://example.invalid/ping">External garden reference</a></p>
+<p><a href="mailto:gardener@example.invalid">Mail the gardener</a></p>
+<p><a href="//example.invalid/protocol-relative">Protocol relative reference</a></p>
+'''.encode())
+                data = data.replace(b'</body>', b'<aside id="garden-note"><p>GARDEN FOOTNOTE DESTINATION.</p><a href="#opening">Return to opening</a></aside></body>')
+                name = 'Text/Chapter One.xhtml'
+            else:
+                data = data.replace(b'<body>', b'<body><p id="harbor-note">HARBOR ANCHOR DESTINATION.</p><p><a href="Chapter%20One.xhtml#opening">Return to Garden</a></p><img src="../garden.svg" width="180" height="120" alt="Vector garden"/>')
+                name = 'Text/Chapter Two.xhtml'
+        from zipfile import ZipInfo
+        corpus.writestr(ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), data)
+    corpus.writestr(ZipInfo('garden.svg', date_time=(2026, 1, 1, 0, 0, 0)), '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="120"><rect width="180" height="120" fill="#e05030"/><circle cx="90" cy="60" r="32" fill="#206040"/></svg>')
+
+# EPUB 2 uses NCX rather than EPUB 3's navigation document, with an RTL spine.
+with ZipFile(OUT / 'fixed.epub') as original, ZipFile(OUT / 'reader-legacy.epub', 'w', compression=ZIP_STORED) as legacy:
+    for item in original.infolist():
+        data = original.read(item.filename)
+        if item.filename == 'nav.xhtml':
+            continue
+        if item.filename == 'book.opf':
+            data = data.replace(b'version="3.0"', b'version="2.0"').replace(b'<meta property="rendition:layout">pre-paginated</meta><meta property="rendition:spread">both</meta>', b'')
+            data = data.replace(b'<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>', b'<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>')
+            data = data.replace(b'<spine>', b'<spine toc="ncx" page-progression-direction="rtl">')
+        if item.filename in ['one.xhtml', 'two.xhtml']:
+            data = data.replace(b'<body>', '<body dir="rtl"><p>مرحبا بالحديقة — שלום לגן</p>'.encode())
+        legacy.writestr(item, data)
+    legacy.writestr(ZipInfo('toc.ncx', date_time=(2026, 1, 1, 0, 0, 0)), '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head/><docTitle><text>Legacy garden</text></docTitle><navMap><navPoint id="one" playOrder="1"><navLabel><text>Legacy Orchid</text></navLabel><content src="one.xhtml"/><navPoint id="two" playOrder="2"><navLabel><text>Legacy Harbor</text></navLabel><content src="two.xhtml"/></navPoint></navPoint></navMap></ncx>')
 
 # Adversarial content is created here, never downloaded. Tests substitute this
 # for the allowlisted EPUB; it is not an arbitrary-file entry point in the UI.

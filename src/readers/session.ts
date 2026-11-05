@@ -34,6 +34,7 @@ export interface ContentsItem {
   target: ReaderLocation;
 }
 export type Restoration = "exact" | "approximate" | "beginning";
+/** Events: relocate; navigate (ReaderLocation); external-link (plain address). */
 export interface ReaderSession extends EventTarget {
   readonly format: "pdf" | "epub";
   readonly reflowable: boolean;

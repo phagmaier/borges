@@ -108,3 +108,56 @@
   border: 0;
   border-top: 1px solid var(--line);
 }
+
+.reader-link-dialog {
+  box-sizing: border-box;
+  width: min(560px, calc(100vw - 32px));
+  padding: 22px;
+  color: light-dark(#2a2420, #ebe3d5);
+  background: light-dark(#fffaf1, #27231d);
+  border: 1px solid light-dark(#ddd3c2, #3d362d);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 30%);
+  font-family: P052, "Palatino Linotype", Palatino, serif;
+}
+.reader-link-dialog::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+.reader-link-dialog h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: normal;
+}
+.reader-link-dialog input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid light-dark(#ddd3c2, #3d362d);
+}
+.reader-link-dialog [role="status"] {
+  min-height: 1.3em;
+  font-size: 0.9rem;
+}
+.reader-link-dialog > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.reader-link-dialog button {
+  padding: 6px 12px;
+  color: inherit;
+  background: light-dark(#f6f1e7, #1d1a16);
+  border: 1px solid light-dark(#ddd3c2, #3d362d);
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+.reader-link-dialog :focus-visible {
+  outline: 2px solid light-dark(#8a3b1e, #e3a47d);
+  outline-offset: 2px;
+}

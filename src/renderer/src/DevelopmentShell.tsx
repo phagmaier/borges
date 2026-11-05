@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RuntimeInfo } from "../../shared/runtime";
 import { type DevelopmentWindow, engineUrl } from "../../shared/windows";
 import { CatalogReader } from "./CatalogReader";
 import { LibraryWindow } from "./library/LibraryWindow";
+import { ReaderLinks } from "./ReaderLinks";
 
 /** Routes the library window to its UI; renders the diagnostic reader shell. */
 export function DevelopmentShell() {
+  const frame = useRef<HTMLIFrameElement>(null);
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [identity, setIdentity] = useState<DevelopmentWindow | null>(null);
@@ -56,10 +58,12 @@ export function DevelopmentShell() {
             open.
           </p>
           <iframe
+            ref={frame}
             title="Book content"
             src={engineUrl(identity.book)}
             sandbox="allow-scripts allow-same-origin"
           />
+          <ReaderLinks frame={frame} />
           <button
             type="button"
             onClick={() => run(window.development.openLibrary())}

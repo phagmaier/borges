@@ -69,6 +69,15 @@ test("adversarial EPUB cannot execute scripts or navigate out of the book", asyn
     "download",
   ]) {
     await chapter.locator(`#${id}`).click();
+    if (["external", "mailto"].includes(id)) {
+      const reference = reader.getByRole("dialog", {
+        name: "External reference",
+      });
+      await expect(reference).toBeVisible();
+      await reference
+        .getByRole("button", { name: "Close", exact: true })
+        .click();
+    }
     expect(chapter.url()).toBe(chapterUrl);
     expect(reader.url()).toBe("borges://app/index.html");
     expect(application.windows()).toHaveLength(2);

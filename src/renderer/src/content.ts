@@ -343,6 +343,28 @@ async function open() {
     .join("");
   const isPdf = book ? book.format === "pdf" : name.endsWith(".pdf");
   session = isPdf ? new PdfSession() : new EpubSession(handleKey);
+  session.addEventListener("navigate", (event) => {
+    const target = (event as CustomEvent<ReaderLocation>).detail;
+    void run(async () => {
+      // foliate queues scrolling to the focused source link on the next
+      // frame. Let that settle before navigating to the link's destination,
+      // or its focus handler can return the reader to the source afterwards.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+      await session.restore(target);
+    });
+  });
+  session.addEventListener("external-link", (event) => {
+    // Diagnostic readers have no open-book handshake, but use the same shell.
+    window.parent.postMessage(
+      {
+        type: "borges:external-link",
+        href: (event as CustomEvent<string>).detail,
+      },
+      parentOrigin ?? "*",
+    );
+  });
   session.addEventListener("relocate", () => {
     element("#location").textContent = session.label;
     element("#visible-text").textContent = session.visibleText;

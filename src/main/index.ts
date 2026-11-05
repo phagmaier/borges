@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   app,
   type BrowserWindow,
+  clipboard,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   ipcMain,
@@ -17,6 +18,7 @@ import {
   type ReconciliationReport,
   reconcileOperations,
 } from "../library/recovery";
+import { externalLink } from "../shared/links";
 import type { CatalogInfo, OpenedBook, RuntimeInfo } from "../shared/runtime";
 import { type Library, openLibrary } from "../storage/catalog";
 import {
@@ -330,6 +332,13 @@ if (!app.requestSingleInstanceLock()) {
       ipcMain.handle("reader:open-book", (event) =>
         openAssignedBook(opened, readers, event),
       );
+      ipcMain.handle("reader:copy-link", (event, address: unknown) => {
+        if (windows.identityFor(event).kind !== "reader")
+          throw new Error("Only a reader window may copy a reference.");
+        const link = externalLink(address);
+        if (!link) throw new Error("Invalid external reference.");
+        clipboard.writeText(link);
+      });
       ipcMain.on("reader:progress", (event, report: unknown) => {
         let owner: number;
         try {

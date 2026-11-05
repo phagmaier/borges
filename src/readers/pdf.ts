@@ -6,6 +6,7 @@ import {
   TextLayer,
   Util,
 } from "pdfjs-dist";
+import { externalLink } from "../shared/links";
 import {
   type ContentsItem,
   panPosition,
@@ -128,12 +129,18 @@ export class PdfSession extends EventTarget implements ReaderSession {
         "No text on this page";
       box.append(transcript);
       for (const annotation of await page.getAnnotations()) {
-        if (annotation.subtype !== "Link" || !annotation.dest) continue;
-        const target = await this.destinationPage(annotation.dest);
-        if (!target) continue;
+        if (annotation.subtype !== "Link") continue;
+        const href = externalLink(annotation.url);
+        const target = annotation.dest
+          ? await this.destinationPage(annotation.dest)
+          : null;
+        if (!target && !href) continue;
         const link = document.createElement("button");
         link.className = "pdf-link";
-        link.setAttribute("aria-label", `Go to page ${target}`);
+        link.setAttribute(
+          "aria-label",
+          href ? `External link: ${href}` : `Go to page ${target}`,
+        );
         const first = new Float32Array(annotation.rect.slice(0, 2));
         const second = new Float32Array(annotation.rect.slice(2, 4));
         Util.applyTransform(first, viewport.transform);
@@ -147,7 +154,16 @@ export class PdfSession extends EventTarget implements ReaderSession {
           height: `${Math.abs(y2 - y1)}px`,
         });
         link.onclick = () => {
-          void this.jump(String(target));
+          if (href)
+            this.dispatchEvent(
+              new CustomEvent("external-link", { detail: href }),
+            );
+          else if (target)
+            this.dispatchEvent(
+              new CustomEvent<ReaderLocation>("navigate", {
+                detail: { format: "pdf", page: target, x: 0, y: 0 },
+              }),
+            );
         };
         box.append(link);
       }

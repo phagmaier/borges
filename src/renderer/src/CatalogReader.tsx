@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { OpenedBook } from "../../shared/runtime";
 import { engineUrl } from "../../shared/windows";
+import { ReaderLinks } from "./ReaderLinks";
 import "./reader.css";
 
 const ENGINE_ORIGIN = "borges://reader";
@@ -136,6 +137,7 @@ export function CatalogReader({
       {/* Messages float over the page: resizing the book frame would
           repaginate it and report a new position. */}
       <div className="reader-stage">
+        <ReaderLinks frame={frame} />
         <div className="reader-messages">
           {alert ? <p role="alert">{alert}</p> : null}
           {notice ? <p data-testid="restoration-notice">{notice}</p> : null}
