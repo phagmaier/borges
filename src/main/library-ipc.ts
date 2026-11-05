@@ -13,6 +13,7 @@ import {
   unarchiveBook,
 } from "../library/books.ts";
 import { readCover, setManualCover } from "../library/covers.ts";
+import type { InspectBook } from "../library/extraction.ts";
 import { countOutcomes, importBatch } from "../library/import-batch.ts";
 import {
   getBook,
@@ -41,6 +42,7 @@ export const LIBRARY_CHANGED = "library:changed";
 export const IMPORT_PROGRESS = "library:import-progress";
 
 interface Dependencies {
+  inspectBook: InspectBook;
   /** Development-only delay after each copied import chunk, in ms. */
   importChunkDelayMs?: number;
   ipcMain: IpcMain;
@@ -58,6 +60,7 @@ interface Dependencies {
  */
 export function registerLibraryIpc({
   ipcMain,
+  inspectBook,
   database,
   root,
   windows,
@@ -199,6 +202,7 @@ export function registerLibraryIpc({
       )
         return null;
       const summary = await importBatch({ root, database }, choice.filePaths, {
+        inspect: inspectBook,
         sectionId: (sectionId as string | null | undefined) ?? null,
         signal: controller.signal,
         onProgress(progress) {

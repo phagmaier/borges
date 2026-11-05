@@ -93,16 +93,16 @@ test("imports a mixed folder, skips identical content with a way to show it, and
   ).toContainText("Fake.pdf does not contain PDF data.");
   await expect(summary(library)).toContainText("New books are in Unfiled.");
   await expect(library.locator(".result-count")).toHaveText("3 books");
-  for (const title of ["Atlas", "Plates", "Scan"])
+  for (const title of ["Atlas", "Borges known fixture", "Scan"])
     await expect(bookButton(library, title)).toBeVisible();
-  expect(titles(profile)).toEqual(["Atlas", "Plates", "Scan"]);
+  expect(titles(profile)).toEqual(["Atlas", "Borges known fixture", "Scan"]);
   expect(await digests(shelf)).toEqual(before);
   expect(await managed(profile, "staging")).toBe(0);
 
   // Imported bytes render in real readers (PDF and image-rich EPUB).
   const pdf = await openCatalogReader(application, "Atlas");
   await expect(pdf.ui.getByTestId("page-text")).toContainText("ORCHID FIRST");
-  const epub = await openCatalogReader(application, "Plates");
+  const epub = await openCatalogReader(application, "Borges known fixture");
   await expect
     .poll(
       () =>
@@ -161,7 +161,7 @@ test("imports a mixed folder, skips identical content with a way to show it, and
   );
   await expect(library.getByRole("searchbox")).toHaveValue("Atlas");
   await expect(bookButton(library, "Atlas")).toBeVisible();
-  expect(titles(profile)).toEqual(["Atlas", "Plates", "Scan"]);
+  expect(titles(profile)).toEqual(["Atlas", "Borges known fixture", "Scan"]);
 
   // From a selected section, new books join it in the same commit.
   await library.getByRole("searchbox").fill("");
@@ -181,7 +181,7 @@ test("imports a mixed folder, skips identical content with a way to show it, and
   await library.getByRole("button", { name: "Import files…" }).click();
   await expect(summary(library)).toContainText("New books joined Maps.");
   await expect(library.locator(".result-count")).toHaveText("1 book");
-  await expect(bookButton(library, "Story")).toBeVisible();
+  await expect(bookButton(library, "Borges known fixture")).toBeVisible();
   expect(
     catalog(profile, (db) =>
       db
@@ -191,7 +191,7 @@ test("imports a mixed folder, skips identical content with a way to show it, and
         .all(maps.id)
         .map((row) => row.title),
     ),
-  ).toEqual(["Story"]);
+  ).toEqual(["Borges known fixture"]);
 });
 
 test.describe("slow copies", () => {
@@ -210,7 +210,8 @@ test.describe("slow copies", () => {
       await writeFile(
         join(folder, `${name}.pdf`),
         Buffer.concat([
-          Buffer.from(`%PDF-1.7\n% ${name}\n`),
+          await readFile(fixture("known.pdf")),
+          Buffer.from(`\n% ${name}\n`),
           Buffer.alloc(1536 * 1024, name.charCodeAt(0)),
         ]),
       );
@@ -231,7 +232,7 @@ test.describe("slow copies", () => {
     await expect(
       summary(library).getByRole("list", { name: "Cancelled" }),
     ).toContainText(
-      "Cancelled while copying; no book was created for Large/B.pdf.",
+      "Cancelled during import; no book was created for Large/B.pdf.",
     );
     expect(titles(profile)).toEqual(["A"]);
     expect(await managed(profile, "files")).toBe(1);

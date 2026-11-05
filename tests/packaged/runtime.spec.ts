@@ -487,3 +487,87 @@ test("packaged readers open a catalog book, save its position and resume it", as
     await readFile(resolve("tests/fixtures/known.pdf")),
   );
 });
+
+test("imports and extracts offline from the relocated bundle and retains extracted/manual provenance after restart", async () => {
+  let application: ElectronApplication | undefined;
+  const paths = [
+    "import-metadata.pdf",
+    "import-metadata.epub",
+    "import-no-metadata.epub",
+    "import-password.pdf",
+  ].map((name) => resolve("tests/fixtures", name));
+  try {
+    application = await launch();
+    let { library } = await catalogOf(application);
+    await application.evaluate(({ dialog }, paths) => {
+      dialog.showOpenDialog = (async () => ({
+        canceled: false,
+        filePaths: paths,
+      })) as typeof dialog.showOpenDialog;
+    }, paths);
+    await library.getByRole("button", { name: "Import files…" }).click();
+    await expect(library.getByTestId("import-counts")).toHaveText(
+      "1 unsupported · 3 imported",
+    );
+    const books = await library.evaluate(async () => {
+      const result = await window.borges.library.books({
+        view: { kind: "all" },
+      });
+      if (!result.ok) throw new Error(result.message);
+      return result.value;
+    });
+    const atlas = books.find((b) => b.title === "Garden Atlas");
+    expect(atlas?.authors).toEqual(["Zora", "Ana"]);
+    expect(atlas?.coverToken).toMatch(/^[0-9a-f]{64}$/);
+    const id = String(atlas?.id);
+    await library.evaluate(async (id) => {
+      const result = await window.borges.library.editMetadata(id, {
+        title: "Manual atlas",
+        authors: [],
+      });
+      if (!result.ok) throw new Error(result.message);
+    }, id);
+    await application.close();
+    application = await launch();
+    ({ library } = await catalogOf(application));
+    const card = library.getByRole("button", {
+      name: "Manual atlas",
+      exact: true,
+    });
+    await expect(card.locator("img")).toBeVisible();
+    const db = new DatabaseSync(join(libraryFor(profile), "catalog.sqlite"), {
+      readOnly: true,
+    });
+    try {
+      expect({
+        ...db
+          .prepare(
+            "SELECT b.title, b.title_manual, b.authors_manual, b.cover_manual, r.extracted_title, r.extracted_authors, r.extracted_cover_path FROM books b JOIN revisions r ON r.id = b.current_revision_id WHERE b.id = ?",
+          )
+          .get(id),
+      }).toMatchObject({
+        title: "Manual atlas",
+        title_manual: 1,
+        authors_manual: 1,
+        cover_manual: 0,
+        extracted_title: "Garden Atlas",
+        extracted_authors: '["Zora","Ana"]',
+        extracted_cover_path: expect.stringMatching(/^covers\//),
+      });
+    } finally {
+      db.close();
+    }
+    const opened = application.waitForEvent("window");
+    await library
+      .getByRole("button", { name: "import-no-metadata", exact: true })
+      .click();
+    const reader = await opened;
+    await expect(
+      reader
+        .frameLocator('iframe[title="Book content"]')
+        .getByTestId("visible-text"),
+    ).toContainText("ORCHID EPUB FIRST");
+  } finally {
+    await application?.close();
+  }
+});

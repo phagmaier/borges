@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
+import type { InspectBook } from "./extraction.ts";
 import { formatFromName } from "./formats.ts";
 import {
   addFileAsNewBook,
@@ -53,6 +54,7 @@ export interface ImportProgress {
 }
 
 export interface ImportBatchOptions {
+  inspect?: InspectBook;
   /** Imported books join this section; null or absent means Unfiled. */
   sectionId?: string | null;
   signal?: AbortSignal;
@@ -127,12 +129,13 @@ async function importOne(
   library: LibraryHandle,
   entry: { name: string; path: string },
   sectionId: string | null,
-  { signal, onImported, checkpoint, pace }: ImportBatchOptions,
+  { signal, onImported, checkpoint, pace, inspect }: ImportBatchOptions,
 ): Promise<ImportOutcome> {
   const { name } = entry;
   try {
     const added = await addFileAsNewBook(library, entry.path, {
       sectionId,
+      ...(inspect ? { inspect } : {}),
       ...(signal ? { signal } : {}),
       ...(checkpoint ? { checkpoint: (step) => checkpoint(name, step) } : {}),
       ...(pace ? { pace } : {}),
@@ -143,9 +146,10 @@ async function importOne(
       kind: "imported",
       bookId: added.bookId,
       message:
-        sectionId !== null && !added.joinedSection
+        (sectionId !== null && !added.joinedSection
           ? `Imported as “${added.title}” into Unfiled: the target section was deleted during the import.`
-          : `Imported as “${added.title}”.`,
+          : `Imported as “${added.title}”.`) +
+        added.warnings.map((warning) => ` Warning: ${warning}`).join(""),
     };
   } catch (error) {
     if (!(error instanceof ImportError))
@@ -162,10 +166,12 @@ async function importOne(
         return {
           name,
           kind: "cancelled",
-          message: `Cancelled while copying; no book was created for ${name}.`,
+          message: `Cancelled during import; no book was created for ${name}.`,
         };
       case "unsupported":
       case "mismatched":
+      case "protected":
+      case "resource-limit":
         return { name, kind: "unsupported", message: error.message };
       default:
         return { name, kind: "failed", message: error.message };

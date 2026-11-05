@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { type FileHandle, open } from "node:fs/promises";
+import { type FileHandle, open, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
   copyToNewFile,
+  digestFile,
   type FileDigest,
   publishFile,
   sameContents,
@@ -14,6 +15,9 @@ import {
   resolveLibraryPath,
 } from "../storage/paths.ts";
 import { immediate } from "../storage/transaction.ts";
+import { parseMetadataEdit } from "./books.ts";
+import { inspectCoverImage } from "./cover-image.ts";
+import { type InspectBook, InspectionError } from "./extraction.ts";
 import {
   type BookFormat,
   formatFromName,
@@ -26,16 +30,21 @@ import {
   rollBackOperation,
   setOperationState,
 } from "./recovery.ts";
+import { foldKey } from "./rules.ts";
 
 // "Add file as new book" on top of the operation protocol (see recovery.ts
 // for the states). Byte-identical live content is skipped, the book can join
 // a section in the same commit, and an abort signal cancels before the
 // commit. Batch import (import-batch.ts) runs files through this one at a
-// time; metadata/cover extraction and parse checks arrive with M4-02.
+// time. Production import supplies a sandboxed content inspector; protocol
+// tests and catalog seeds can exercise publication independently of parsers.
 
 export type ImportErrorCode =
   | "unsupported"
   | "mismatched"
+  | "protected"
+  | "invalid-content"
+  | "resource-limit"
   | "unreadable"
   | "duplicate"
   | "cancelled"
@@ -67,6 +76,11 @@ export class ImportError extends Error {
 export type ImportStep =
   | "pending"
   | "copying"
+  | "validated"
+  | "cover-pending"
+  | "cover-staged"
+  | "cover-renamed"
+  | "cover-published"
   | "staged"
   | "renamed"
   | "published"
@@ -74,6 +88,9 @@ export type ImportStep =
   | "committed";
 
 export interface AddBookOptions {
+  /** Production content validation/extraction. Omit only for storage tests
+   * and controlled catalog seeds which isolate the publication protocol. */
+  inspect?: InspectBook;
   now?: () => number;
   /** Called at each protocol point; throwing simulates a failure there. */
   checkpoint?: (step: ImportStep) => void;
@@ -99,6 +116,7 @@ export interface AddedBook {
   size: number;
   /** Whether the requested section was joined (false when none requested). */
   joinedSection: boolean;
+  warnings: string[];
 }
 
 /**
@@ -143,7 +161,13 @@ export async function addFileAsNewBook(
   const revisionId = randomUUID();
   const stagedPath = `staging/${operationId}.partial`;
   const publishedPath = `files/${revisionId}.${claimed}`;
-  const title = titleFromName(sourceName);
+  let title = titleFromName(sourceName);
+  let extractedTitle: string | null = null;
+  let authors: string[] = [];
+  let subjects: string[] = [];
+  const warnings: string[] = [];
+  let coverPath: string | null = null;
+  const coverOperationId = `${operationId}-cover`;
   try {
     const at = now();
     immediate(database, () =>
@@ -208,6 +232,56 @@ export async function addFileAsNewBook(
       resolveLibraryPath(root, stagedPath),
     );
     if (existing) throw duplicateOf(sourceName, existing);
+    if (options.inspect) {
+      const extracted = await options.inspect(
+        resolveLibraryPath(root, stagedPath),
+        claimed,
+        signal,
+      );
+      checkpoint("validated");
+      warnings.push(...extracted.warnings);
+      // Validate each optional field independently. Bad metadata must not
+      // discard other useful fields or make a parseable book fail import.
+      for (const field of ["title", "authors", "subjects"] as const) {
+        try {
+          const value =
+            field === "title" && !extracted.title?.trim()
+              ? {}
+              : { [field]: extracted[field] };
+          const clean = parseMetadataEdit(value);
+          if (clean.title) extractedTitle = title = clean.title;
+          if (clean.authors) authors = clean.authors;
+          if (clean.subjects) subjects = clean.subjects;
+        } catch {
+          warnings.push(
+            `${field} metadata could not be extracted; a fallback was used.`,
+          );
+        }
+      }
+      if (extracted.cover) {
+        try {
+          coverPath = await publishExtractedCover(
+            library,
+            bookId,
+            coverOperationId,
+            Buffer.from(extracted.cover),
+            checkpoint,
+            now,
+          );
+        } catch (error) {
+          await rollBackAfterFailure(
+            library,
+            coverOperationId,
+            storageError(error, sourceName),
+            now,
+          );
+          if (signal?.aborted) checkpoint("validated");
+          warnings.push(
+            "Cover could not be stored; a placeholder will be used.",
+          );
+        }
+      }
+    }
     checkpoint("staged");
     await publishFile(
       resolveLibraryPath(root, stagedPath),
@@ -227,14 +301,15 @@ export async function addFileAsNewBook(
       if (existing) throw duplicateOf(sourceName, existing);
       database
         .prepare(
-          "INSERT INTO books (id, current_revision_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO books (id, current_revision_id, title, cover_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .run(bookId, revisionId, title, at, at);
+        .run(bookId, revisionId, title, coverPath, at, at);
       database
         .prepare(
           `INSERT INTO revisions (id, book_id, format, path, sha256, size,
-             original_filename, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+             original_filename, extracted_title, extracted_authors, extracted_subjects,
+             extracted_cover_path, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           revisionId,
@@ -244,8 +319,25 @@ export async function addFileAsNewBook(
           digest.sha256,
           digest.size,
           sourceName,
+          extractedTitle,
+          JSON.stringify(authors),
+          JSON.stringify(subjects),
+          coverPath,
           at,
         );
+      const authorInsert = database.prepare(
+        "INSERT INTO book_authors (book_id, position, name) VALUES (?, ?, ?)",
+      );
+      authors.forEach((name, position) => {
+        authorInsert.run(bookId, position, name);
+      });
+      const subjectInsert = database.prepare(
+        "INSERT INTO book_subjects (book_id, label, label_key) VALUES (?, ?, ?)",
+      );
+      for (const label of subjects)
+        subjectInsert.run(bookId, label, foldKey(label));
+      if (coverPath)
+        setOperationState(database, coverOperationId, "committed", {}, at);
       if (options.sectionId) {
         joinedSection =
           database
@@ -269,11 +361,19 @@ export async function addFileAsNewBook(
       path: publishedPath,
       ...digest,
       joinedSection,
+      warnings,
     };
   } catch (error) {
     if (committed) throw error;
     const failure =
-      error instanceof ImportError ? error : storageError(error, sourceName);
+      error instanceof ImportError
+        ? error
+        : error instanceof InspectionError
+          ? new ImportError(error.code, `${sourceName}: ${error.message}`, {
+              cause: error,
+            })
+          : storageError(error, sourceName);
+    await rollBackAfterFailure(library, coverOperationId, failure, now);
     await rollBackAfterFailure(library, operationId, failure, now);
     throw failure;
   }
@@ -394,4 +494,64 @@ const label = (format: BookFormat) => (format === "pdf" ? "PDF" : "EPUB");
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** A separate cover operation is committed in the book's transaction. Until
+ * then startup can roll both publications back independently, including a
+ * kill between the two renames. No schema change or unrecorded file exists. */
+async function publishExtractedCover(
+  library: LibraryHandle,
+  bookId: string,
+  operationId: string,
+  bytes: Buffer,
+  checkpoint: (step: ImportStep) => void,
+  now: () => number,
+): Promise<string> {
+  const size = inspectCoverImage(bytes);
+  if (
+    size.width > 512 ||
+    size.height > 768 ||
+    bytes.toString("ascii", 12, 16) !== "IHDR"
+  )
+    throw new Error("Invalid extracted thumbnail");
+  const { database, root } = library;
+  const stagedPath = `staging/${operationId}.partial`;
+  const publishedPath = `covers/${operationId}.png`;
+  immediate(database, () =>
+    database
+      .prepare(`INSERT INTO recovery_operations
+    (id, kind, state, book_id, staged_path, detail, created_at, updated_at)
+    VALUES (?, 'cover', 'pending', ?, ?, '{}', ?, ?)`)
+      .run(operationId, bookId, stagedPath, now(), now()),
+  );
+  checkpoint("cover-pending");
+  const staged = resolveLibraryPath(root, stagedPath);
+  await writeFile(staged, bytes, { flag: "wx", mode: 0o600 });
+  const handle = await open(staged, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  const digest = await digestFile(staged);
+  immediate(database, () =>
+    setOperationState(
+      database,
+      operationId,
+      "staged",
+      {
+        publishedPath,
+        detail: { ...digest },
+      },
+      now(),
+    ),
+  );
+  checkpoint("cover-staged");
+  await publishFile(staged, resolveLibraryPath(root, publishedPath));
+  checkpoint("cover-renamed");
+  immediate(database, () =>
+    setOperationState(database, operationId, "published", {}, now()),
+  );
+  checkpoint("cover-published");
+  return publishedPath;
 }

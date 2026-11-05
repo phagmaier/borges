@@ -351,7 +351,7 @@ describe("adding a file as a new book", () => {
 describe("startup reconciliation after a killed import", () => {
   // What the killed process left behind, checked before reconciling.
   const leftovers: Record<
-    Exclude<ImportStep, "committed">,
+    Exclude<ImportStep, "committed" | "validated" | `cover-${string}`>,
     { state: string; staging: number; files: number }
   > = {
     pending: { state: "pending", staging: 0, files: 0 },

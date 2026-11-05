@@ -17,7 +17,7 @@ def chunk(kind, data):
 png += chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
 png += chunk(b'IDAT', zlib.compress(b''.join(b'\0' + pixels[y*w*3:(y+1)*w*3] for y in range(h)))) + chunk(b'IEND', b'')
 
-def pdf(name, scanned=False):
+def pdf(name, scanned=False, metadata=False, password=None):
     objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'']
     def add(x):
         objects.append(x)
@@ -39,7 +39,42 @@ def pdf(name, scanned=False):
         objects[0] = f'<< /Type /Catalog /Pages 2 0 R /Outlines {outline_root} 0 R >>'.encode()
         link = add(f'<< /Type /Annot /Subtype /Link /Rect [40 238 260 265] /Border [0 0 0] /Dest [{pages[1]} 0 R /Fit] >>'.encode())
         objects[pages[0]-1] = objects[pages[0]-1][:-3] + f' /Annots [{link} 0 R] >>'.encode()
-    data = b'%PDF-1.4\n' 
+    info = ''
+    if metadata:
+        info_id = add(b'<< /Title (Garden Atlas) /Author (Zora; Ana) /Subject (Maps) /Keywords (Travel; MAPS) >>')
+        info = f' /Info {info_id} 0 R'
+    encryption = ''
+    if password is not None:
+        # PDF Standard Security Handler revision 2, created entirely here.
+        # Fixtures test refusal, including an empty user password, not decryption.
+        padding = bytes.fromhex('28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a')
+        def pad(value): return (value.encode() + padding)[:32]
+        def rc4(key, data):
+            state = list(range(256)); j = 0
+            for i in range(256):
+                j = (j + state[i] + key[i % len(key)]) % 256
+                state[i], state[j] = state[j], state[i]
+            i = j = 0; output = bytearray()
+            for value in data:
+                i = (i + 1) % 256; j = (j + state[i]) % 256
+                state[i], state[j] = state[j], state[i]
+                output.append(value ^ state[(state[i] + state[j]) % 256])
+            return bytes(output)
+        file_id = hashlib.md5(b'Borges created encryption refusal fixture').digest()
+        owner = rc4(hashlib.md5(pad('owner-secret')).digest()[:5], pad(password))
+        key = hashlib.md5(pad(password) + owner + struct.pack('<i', -4) + file_id).digest()[:5]
+        user = rc4(key, padding)
+        # There are no literal strings in the image-only document. Encrypt
+        # each stream using its own object key; names/dictionaries stay plain.
+        for index, obj in enumerate(objects):
+            if b'\nstream\n' in obj:
+                header, content = obj.split(b'\nstream\n', 1)
+                end = content.rfind(b'\nendstream')
+                object_key = hashlib.md5(key + (index+1).to_bytes(3, 'little') + bytes(2)).digest()[:10]
+                objects[index] = header + b'\nstream\n' + rc4(object_key, content[:end]) + content[end:]
+        encrypt_id = add(f'<< /Filter /Standard /V 1 /R 2 /Length 40 /O <{owner.hex()}> /U <{user.hex()}> /P -4 >>'.encode())
+        encryption = f' /Encrypt {encrypt_id} 0 R /ID [<{file_id.hex()}> <{file_id.hex()}>]'
+    data = b'%PDF-1.4\n'
     offsets = [0]
     for i, obj in enumerate(objects, 1):
         offsets.append(len(data))
@@ -47,7 +82,7 @@ def pdf(name, scanned=False):
     xref = len(data)
     data += f'xref\n0 {len(offsets)}\n0000000000 65535 f \n'.encode()
     data += b''.join(f'{offset:010} 00000 n \n'.encode() for offset in offsets[1:])
-    data += f'trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+    data += f'trailer\n<< /Size {len(offsets)} /Root 1 0 R{info}{encryption} >>\nstartxref\n{xref}\n%%EOF\n'.encode()
     (OUT / name).write_bytes(data)
 
 pdf('known.pdf')
@@ -118,3 +153,55 @@ with ZipFile(OUT / 'obfuscated.epub') as original, ZipFile(OUT / 'malicious.epub
         attack_put(entry.filename, content)
     attack_put('evil.js', 'window.bookScriptRan = true; parent.bookScriptRan = true;')
     attack_put('evil.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" onload="parent.bookScriptRan=true"><script>parent.bookScriptRan=true</script><rect width="24" height="24" fill="#e05030"/></svg>')
+
+# Import-specific created fixtures. Core reader fixtures above stay unchanged.
+pdf('import-metadata.pdf', metadata=True)
+pdf('import-password.pdf', scanned=True, password='book-secret')
+pdf('import-empty-password.pdf', scanned=True, password='')
+(OUT / 'import-corrupt.pdf').write_bytes(b'%PDF-1.7\nnot a parseable document\n')
+
+from zipfile import ZIP_DEFLATED
+base_metadata = '<dc:title>Borges known fixture</dc:title>'
+rich_metadata = '<dc:title>Garden Stories</dc:title><dc:creator>Zora</dc:creator><dc:creator>Ana</dc:creator><dc:subject>Gardens</dc:subject><dc:subject>GARDENS</dc:subject><dc:subject>Fiction</dc:subject>'
+for variant in ['metadata', 'bad-cover', 'bad-metadata', 'no-metadata', 'drm', 'fake-font', 'bad-xml', 'bad-spine', 'bad-type', 'bomb', 'forged-size']:
+    with ZipFile(OUT / 'reflowable.epub') as original, ZipFile(OUT / f'import-{variant}.epub', 'w', compression=ZIP_DEFLATED) as target:
+        def put_import(path, data):
+            from zipfile import ZipInfo
+            entry = ZipInfo(path, date_time=(2026, 1, 1, 0, 0, 0))
+            entry.compress_type = ZIP_DEFLATED
+            target.writestr(entry, data)
+        for entry in original.infolist():
+            data = original.read(entry.filename)
+            if entry.filename == 'book.opf':
+                data = data.replace(base_metadata.encode(), rich_metadata.encode())
+                if variant == 'no-metadata':
+                    start = data.index(b'<metadata'); end = data.index(b'</metadata>') + len(b'</metadata>')
+                    data = data[:start] + b'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"/>' + data[end:]
+                if variant == 'bad-metadata':
+                    data = data.replace(b'Garden Stories', b'A' * 1001)
+                if variant == 'bad-cover': data = data.replace(b'Garden Stories', b'Garden Stories with missing cover')
+                if variant in ['metadata', 'bad-cover']:
+                    data = data.replace(b'</manifest>', b'<item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/></manifest>')
+                if variant == 'bad-type': data = data.replace(b'href="one.xhtml" media-type="application/xhtml+xml"', b'href="one.xhtml" media-type="application/octet-stream"')
+                if variant == 'bad-spine': data = data.replace(b'idref="one"', b'idref="absent"')
+            if entry.filename == 'one.xhtml' and variant == 'no-metadata': data = b'<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">' + data
+            if entry.filename == 'one.xhtml' and variant == 'bad-xml': data = b'<html><body>broken'
+            if entry.filename == 'one.xhtml' and variant in ['bomb', 'forged-size']: data = b'A' * (33 * 1024 * 1024)
+            put_import(entry.filename, data)
+        if variant in ['metadata', 'bad-cover']:
+            put_import('cover.png', png if variant == 'metadata' else b'Not a PNG')
+        if variant in ['drm', 'fake-font']:
+            algorithm = 'http://www.w3.org/2001/04/xmlenc#aes128-cbc' if variant == 'drm' else 'http://www.idpf.org/2008/embedding'
+            put_import('META-INF/encryption.xml', f'<encryption><EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"><EncryptionMethod Algorithm="{algorithm}"/><CipherData><CipherReference URI="one.xhtml"/></CipherData></EncryptedData></encryption>')
+    if variant == 'forged-size':
+        # Lie in the central directory. Inflation must stop at the stated
+        # bound instead of expanding 33 MiB before checking its output.
+        path = OUT / f'import-{variant}.epub'
+        data = bytearray(path.read_bytes()); at = 0
+        while True:
+            at = data.find(b'PK\x01\x02', at)
+            if at < 0: break
+            length = struct.unpack_from('<H', data, at + 28)[0]
+            if data[at+46:at+46+length] == b'one.xhtml': struct.pack_into('<I', data, at + 24, 100)
+            at += 46 + length
+        path.write_bytes(data)

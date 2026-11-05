@@ -93,7 +93,8 @@ async function isEpubContainer(
   let text: string;
   try {
     if (mimetype.method === 0) text = data.toString("latin1");
-    else if (mimetype.method === 8) text = inflateRawSync(data).toString();
+    else if (mimetype.method === 8)
+      text = inflateRawSync(data, { maxOutputLength: 1024 }).toString();
     else return false;
   } catch {
     return false;

@@ -96,6 +96,32 @@ function protectDocument(doc: Document): Document {
   return doc;
 }
 
+/** The pinned parser assumes at least one Dublin Core metadata element.
+ * Empty/missing descriptive metadata is valid for our import fallback: supply
+ * only an unknown language to the adapter's in-memory package, leaving the
+ * original/stored file and catalog metadata untouched. */
+function readablePackage(source: string): string {
+  const opf = "http://www.idpf.org/2007/opf";
+  const dc = "http://purl.org/dc/elements/1.1/";
+  if (!source.includes(opf)) return source;
+  const doc = new DOMParser().parseFromString(source, "application/xml");
+  const root = doc.documentElement;
+  if (root.localName !== "package" || root.namespaceURI !== opf) return source;
+  let metadata = [...root.children].find(
+    (el) => el.localName === "metadata" && el.namespaceURI === opf,
+  );
+  if (!metadata) {
+    metadata = doc.createElementNS(opf, "metadata");
+    root.prepend(metadata);
+  }
+  if ([...metadata.children].some((el) => el.namespaceURI === dc))
+    return source;
+  const language = doc.createElementNS(dc, "dc:language");
+  language.textContent = "und";
+  metadata.append(language);
+  return new XMLSerializer().serializeToString(doc);
+}
+
 export class EpubSession extends EventTarget implements ReaderSession {
   readonly format = "epub";
   sizing: ReaderSizing = { fontSize: 18, zoom: 1 };
@@ -139,8 +165,10 @@ export class EpubSession extends EventTarget implements ReaderSession {
     const map = new Map(entries.map((entry) => [entry.filename, entry]));
     const { EPUB } = await moduleAt("epub");
     this.book = await new EPUB({
-      loadText: (name: string) =>
-        map.get(name)?.getData(new zip.TextWriter()) ?? null,
+      loadText: async (name: string) => {
+        const text = await map.get(name)?.getData(new zip.TextWriter());
+        return typeof text === "string" ? readablePackage(text) : null;
+      },
       loadBlob: (name: string) =>
         map.get(name)?.getData(new zip.BlobWriter()) ?? null,
       getSize: (name: string) => map.get(name)?.uncompressedSize ?? 0,

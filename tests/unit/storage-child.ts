@@ -1,5 +1,5 @@
 // Real child process for lock and crash tests; run directly by Node.
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { setManualCover } from "../../src/library/covers.ts";
 import { addFileAsNewBook, type ImportStep } from "../../src/library/import.ts";
 import {
@@ -66,6 +66,24 @@ if (mode === "hold-lock") {
   await setManualCover(library, "b1", source, {
     // Storage/crash checks isolate the decoder, exercised by native tests.
     normalize: (bytes) => bytes,
+    checkpoint(reached) {
+      if (reached !== step) return;
+      console.log(`at ${step}`);
+      block();
+    },
+  });
+  throw new Error(`never reached ${step}`);
+} else if (mode === "import-extracted-and-stop") {
+  const [source, step, cover] = extra as [string, ImportStep, string];
+  const library = openLibrary({ root });
+  await addFileAsNewBook(library, source, {
+    inspect: async () => ({
+      title: "Extracted atlas",
+      authors: ["Ana"],
+      subjects: [],
+      warnings: [],
+      cover: readFileSync(cover),
+    }),
     checkpoint(reached) {
       if (reached !== step) return;
       console.log(`at ${step}`);

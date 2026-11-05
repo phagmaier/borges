@@ -37,6 +37,7 @@ export default defineConfig({
         input: {
           shell: resolve("src/renderer/index.html"),
           content: resolve("src/renderer/content.html"),
+          extract: resolve("src/renderer/extract.html"),
         },
       },
     },

@@ -24,6 +24,7 @@ import {
   resolveLibraryRoot,
 } from "../storage/paths";
 import { resolveServedAsset } from "./assets";
+import { createBookInspector } from "./extraction";
 import { registerLibraryIpc } from "./library-ipc";
 import { ReaderSessions } from "./sessions";
 import { showStartupFailure } from "./startup";
@@ -314,6 +315,7 @@ if (!app.requestSingleInstanceLock()) {
       );
       sessions = readers;
       const libraryRequests = registerLibraryIpc({
+        inspectBook: createBookInspector(rendererRoot),
         ipcMain,
         database: opened.database,
         root: opened.root,
