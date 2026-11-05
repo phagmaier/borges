@@ -414,3 +414,212 @@ it("copies explicitly selected file symlinks without touching their targets", as
   expect(titles()).toEqual(["Chosen link"]);
   expect(readFileSync(target)).toEqual(fixture("known.pdf"));
 });
+
+it("requires a per-file metadata choice and Keep Both creates a separate section member", async () => {
+  const inspect = async () => ({
+    title: "The Atlas",
+    authors: ["Ada Reader"],
+    subjects: [],
+    cover: null,
+    warnings: [],
+  });
+  const first = await addFileAsNewBook(
+    library,
+    put("one.pdf", fixture("known.pdf")),
+    { inspect },
+  );
+  const section = createSection(library.database, {
+    name: "New shelf",
+    parentId: null,
+  });
+  let prompted = false;
+  const summary = await importBatch(
+    library,
+    [put("two.pdf", fixture("image-only.pdf"))],
+    {
+      inspect,
+      sectionId: section.id,
+      chooseDuplicate: async (prompt) => {
+        prompted = true;
+        expect(prompt.candidates.map((c) => c.bookId)).toEqual([first.bookId]);
+        return { action: "keep-both" };
+      },
+    },
+  );
+  expect(prompted).toBe(true);
+  expect(summary.outcomes[0]?.kind).toBe("imported");
+  expect(titles()).toEqual(["The Atlas", "The Atlas"]);
+  expect(rows("SELECT book_id FROM section_memberships")).toEqual([
+    { book_id: summary.outcomes[0]?.bookId },
+  ]);
+});
+
+const metadata =
+  (title: string | null = "The Atlas", authors = ["Ada Reader"]) =>
+  async () => ({ title, authors, subjects: [], cover: null, warnings: [] });
+
+it("matches normalized effective metadata across all live candidates, including Archive, and Skip leaves memberships untouched", async () => {
+  const a = await addFileAsNewBook(
+    library,
+    put("a.pdf", fixture("known.pdf")),
+    { inspect: metadata("  THE   ATLAS ", ["ＡＤＡ Reader"]) },
+  );
+  const b = await addFileAsNewBook(
+    library,
+    put("b.epub", fixture("reflowable.epub")),
+    {
+      inspect: metadata(),
+      chooseDuplicate: async () => ({ action: "keep-both" }),
+    },
+  );
+  archiveBook(library.database, a.bookId);
+  const result = await importBatch(
+    library,
+    [put("c.pdf", fixture("image-only.pdf"))],
+    {
+      inspect: metadata("the atlas", ["Someone Else", "ada reader"]),
+      chooseDuplicate: async (prompt) => {
+        expect(prompt.candidates.map((c) => c.bookId).sort()).toEqual(
+          [a.bookId, b.bookId].sort(),
+        );
+        expect(
+          prompt.candidates.find((c) => c.bookId === a.bookId)?.archived,
+        ).toBe(true);
+        return { action: "skip" };
+      },
+    },
+  );
+  expect(result.outcomes[0]?.kind).toBe("skipped");
+  expect(titles()).toHaveLength(2);
+  expect(managed("staging")).toEqual([]);
+  expect(managed("files")).toHaveLength(2);
+});
+
+it.each([
+  [null, ["Ada Reader"]],
+  ["The Atlas", []],
+  ["The Atlas!", ["Ada Reader"]],
+  ["The Atlas", ["Other"]],
+] as [string | null, string[]][])(
+  "does not guess duplicates for title %s and authors %s",
+  async (title, authors) => {
+    await addFileAsNewBook(library, put("first.pdf", fixture("known.pdf")), {
+      inspect: metadata(),
+    });
+    let prompted = false;
+    const result = await importBatch(
+      library,
+      [put("The Atlas.pdf", fixture("image-only.pdf"))],
+      {
+        inspect: metadata(title, authors),
+        chooseDuplicate: async () => {
+          prompted = true;
+          return { action: "skip" };
+        },
+      },
+    );
+    expect(prompted).toBe(false);
+    expect(result.outcomes[0]?.kind).toBe("imported");
+  },
+);
+
+it("replaces exactly the chosen candidate and keeps its state and old revision in Trash", async () => {
+  const a = await addFileAsNewBook(
+    library,
+    put("a.pdf", fixture("known.pdf")),
+    { inspect: metadata() },
+  );
+  const b = await addFileAsNewBook(
+    library,
+    put("b.epub", fixture("reflowable.epub")),
+    {
+      inspect: metadata(),
+      chooseDuplicate: async () => ({ action: "keep-both" }),
+    },
+  );
+  archiveBook(library.database, b.bookId);
+  const section = createSection(library.database, {
+    name: "Target",
+    parentId: null,
+  });
+  library.database
+    .prepare("INSERT INTO section_memberships VALUES (?, ?, 1)")
+    .run(section.id, b.bookId);
+  let retired = false;
+  const result = await importBatch(
+    library,
+    [put("new.pdf", fixture("image-only.pdf"))],
+    {
+      inspect: metadata(),
+      chooseDuplicate: async () => ({ action: "replace", bookId: b.bookId }),
+      beforeReplacement: (id) => {
+        expect(id).toBe(b.bookId);
+        retired = true;
+      },
+    },
+  );
+  expect(retired).toBe(true);
+  expect(result.outcomes[0]?.message).toContain("Replaced file");
+  expect(result.outcomes[0]?.bookId).toBe(b.bookId);
+  expect(
+    rows("SELECT current_revision_id FROM books WHERE id = ?", a.bookId),
+  ).toEqual([{ current_revision_id: a.revisionId }]);
+  expect(rows("SELECT revision_id FROM trash_entries")).toEqual([
+    { revision_id: b.revisionId },
+  ]);
+  expect(rows("SELECT book_id FROM section_memberships")).toEqual([
+    { book_id: b.bookId },
+  ]);
+  expect(
+    rows("SELECT archived_at FROM books WHERE id = ?", b.bookId)[0]
+      ?.archived_at,
+  ).not.toBeNull();
+  expect(managed("files")).toHaveLength(3);
+});
+
+it.each(["stale", "unlisted", "cancel", "flush"])(
+  "preserves the target and cleans staging on %s choice failure",
+  async (mode) => {
+    const original = await addFileAsNewBook(
+      library,
+      put("a.pdf", fixture("known.pdf")),
+      { inspect: metadata() },
+    );
+    const controller = new AbortController();
+    const result = await importBatch(
+      library,
+      [put("b.pdf", fixture("image-only.pdf"))],
+      {
+        inspect: metadata(),
+        signal: controller.signal,
+        chooseDuplicate: async () => {
+          if (mode === "cancel") controller.abort();
+          if (mode === "stale")
+            library.database
+              .prepare("UPDATE books SET deleted_at = 1 WHERE id = ?")
+              .run(original.bookId);
+          return {
+            action: "replace",
+            bookId: mode === "unlisted" ? "unlisted" : original.bookId,
+          };
+        },
+        beforeReplacement: () => {
+          if (mode === "flush") throw new Error("Cannot flush reader");
+        },
+      },
+    );
+    expect(result.outcomes[0]?.kind).toBe(
+      mode === "cancel"
+        ? "cancelled"
+        : mode === "unlisted"
+          ? "skipped"
+          : "failed",
+    );
+    expect(rows("SELECT current_revision_id FROM books")).toEqual([
+      { current_revision_id: original.revisionId },
+    ]);
+    expect(rows("SELECT * FROM trash_entries")).toEqual([]);
+    expect(managed("files")).toHaveLength(1);
+    expect(managed("staging")).toEqual([]);
+  },
+);

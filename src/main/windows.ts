@@ -22,6 +22,7 @@ interface WindowEntry {
 export class WindowCoordinator {
   private readonly entries = new Map<string, WindowEntry>();
   private quitting = false;
+  private readonly closingBooks = new Set<string>();
 
   constructor(
     private readonly shellUrl: string,
@@ -40,6 +41,9 @@ export class WindowCoordinator {
     if (
       this.quitting ||
       !entry ||
+      (entry.identity.kind === "reader" &&
+        entry.identity.book.source === "catalog" &&
+        this.closingBooks.has(entry.identity.book.id)) ||
       event.senderFrame !== event.sender.mainFrame ||
       !this.isShellUrl(event.senderFrame.url)
     ) {
@@ -63,6 +67,8 @@ export class WindowCoordinator {
 
   /** Open or focus the one reader for a catalog book (already validated). */
   async openCatalogReader(book: { id: string; title: string }): Promise<void> {
+    if (this.closingBooks.has(book.id))
+      throw new Error("This reader is closing for deletion. Try again.");
     await this.open(`catalog:${book.id}`, {
       kind: "reader",
       book: { id: book.id, title: book.title, source: "catalog" },
@@ -72,6 +78,45 @@ export class WindowCoordinator {
   /** The open reader window's contents for a catalog book, if any. */
   catalogReader(bookId: string): WebContents | undefined {
     return this.contentsOf(`catalog:${bookId}`);
+  }
+
+  /** Revoke the closing page's authority, save/retire synchronously, then
+   * require observed closure. A prevented close must never soft-delete it. */
+  async closeCatalogReader(
+    bookId: string,
+    beforeClose: (owner: number) => void,
+  ): Promise<void> {
+    const entry = this.entries.get(`catalog:${bookId}`);
+    if (!entry || entry.window.isDestroyed()) return;
+    this.closingBooks.add(bookId);
+    try {
+      beforeClose(entry.window.webContents.id);
+      await new Promise<void>((resolve, reject) => {
+        const window = entry.window;
+        const closed = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          window.off("closed", closed);
+          reject(
+            new Error(
+              "The reader did not close. The book remains in the library. Close its reader and try again.",
+            ),
+          );
+        }, 2000);
+        window.once("closed", closed);
+        try {
+          window.close();
+        } catch (error) {
+          clearTimeout(timer);
+          window.off("closed", closed);
+          reject(error);
+        }
+      });
+    } finally {
+      this.closingBooks.delete(bookId);
+    }
   }
 
   /** Reload the existing shell after its session was retired. */

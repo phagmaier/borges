@@ -663,3 +663,59 @@
   padding: 2px 10px;
   font-size: 0.85rem;
 }
+
+/* All duplicate candidates stay selectable at small window sizes. */
+.library .duplicate-dialog {
+  max-height: calc(100vh - 6rem);
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.duplicate-dialog fieldset {
+  max-height: 30vh;
+  overflow: auto;
+}
+.duplicate-candidate {
+  display: block;
+  margin: 6px 0;
+}
+.library .duplicate-candidate input {
+  margin-right: 6px;
+  accent-color: var(--accent);
+}
+
+.trash-view {
+  max-width: 64rem;
+}
+.library .trash-view h2 {
+  font-weight: normal;
+  font-style: italic;
+  margin-top: 32px;
+}
+.trash-entries {
+  list-style: none;
+  padding: 0;
+}
+.trash-entries li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-top: 1px solid var(--line);
+  padding: 18px 0;
+}
+.trash-entries h3 {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+  font-weight: normal;
+}
+.trash-entries p {
+  margin: 4px 0;
+  color: var(--muted);
+}
+.trash-entries div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.library .trash-entries li button {
+  flex-shrink: 0;
+}

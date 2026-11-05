@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   BrowserWindow,
@@ -13,6 +14,10 @@ import {
   unarchiveBook,
 } from "../library/books.ts";
 import { readCover, setManualCover } from "../library/covers.ts";
+import type {
+  DuplicateChoice,
+  DuplicatePrompt,
+} from "../library/duplicates.ts";
 import type { InspectBook } from "../library/extraction.ts";
 import { replaceBookFile } from "../library/import.ts";
 import { countOutcomes, importBatch } from "../library/import-batch.ts";
@@ -22,6 +27,7 @@ import {
   listSections,
   queryBooks,
 } from "../library/query.ts";
+import { restoreRevision } from "../library/revision-restore.ts";
 import { LibraryError } from "../library/rules.ts";
 import {
   addBooksToSection,
@@ -32,6 +38,16 @@ import {
   removeBooksFromSection,
   renameSection,
 } from "../library/sections.ts";
+import {
+  deleteBook,
+  listTrash,
+  RestoreConflict,
+  restoreDeletedBook,
+} from "../library/trash.ts";
+import type {
+  TrashChoice,
+  TrashMatchPrompt,
+} from "../library/trash-matches.ts";
 import type { LibraryResult } from "../shared/runtime.ts";
 import { normalizeCover } from "./cover-image.ts";
 import type { ReaderSessions } from "./sessions.ts";
@@ -86,6 +102,16 @@ export function registerLibraryIpc({
           throw new Error("Only the library window may do this.");
         let result: LibraryResult<unknown>;
         try {
+          if (
+            options.mutates &&
+            trashBusy &&
+            channel !== "delete-book" &&
+            channel !== "restore-deleted-book"
+          )
+            throw new LibraryError(
+              "invalid",
+              "A Trash action is running. Try again when it finishes.",
+            );
           result = { ok: true, value: (await run(...args)) ?? null };
         } catch (error) {
           result =
@@ -143,11 +169,182 @@ export function registerLibraryIpc({
 
   // One import batch at a time, tied to the library page that started it:
   // closing or reloading that page cancels the batch (completed books stay).
+  let duplicateChoice: {
+    token: string;
+    resolve(choice: DuplicateChoice): void;
+  } | null = null;
+  handle("resolve-duplicate", (token, choice) => {
+    if (!duplicateChoice || duplicateChoice.token !== token)
+      throw new LibraryError(
+        "invalid",
+        "This import choice is no longer pending.",
+      );
+    const value = choice as DuplicateChoice | null;
+    if (
+      !value ||
+      !["keep-both", "skip", "replace"].includes(value.action) ||
+      (value.action === "replace" && typeof value.bookId !== "string")
+    )
+      throw new LibraryError("invalid", "Choose Keep Both, Replace or Skip.");
+    duplicateChoice.resolve(value);
+    duplicateChoice = null;
+  });
+  let pendingTrash: {
+    token: string;
+    resolve(choice: TrashChoice): void;
+  } | null = null;
+  handle("resolve-trash-match", (token, input) => {
+    if (!pendingTrash || pendingTrash.token !== token)
+      throw new LibraryError(
+        "invalid",
+        "This Trash choice is no longer pending.",
+      );
+    const choice = input as TrashChoice | null;
+    if (
+      !choice ||
+      (choice.action !== "cancel" &&
+        (choice.action !== "restore" ||
+          typeof choice.entryId !== "string" ||
+          !["book", "current", "separate"].includes(choice.mode)))
+    )
+      throw new LibraryError(
+        "invalid",
+        "Choose an available restore action or cancel.",
+      );
+    pendingTrash.resolve(choice);
+    pendingTrash = null;
+  });
   let importing: AbortController | null = null;
   let replacing = false;
+  let trashBusy = false;
+  handle("trash", () => listTrash({ root, database }));
+  handle(
+    "delete-book",
+    async (bookId) => {
+      const book = getBook(database, bookId as string);
+      if (trashBusy || importing || replacing)
+        throw new LibraryError(
+          "invalid",
+          "Another import, replacement or Trash action is running.",
+        );
+      trashBusy = true;
+      let quiesced = false;
+      try {
+        await windows.closeCatalogReader(book.id, (owner) => {
+          readers.quiesce(owner);
+          quiesced = true;
+        });
+        return deleteBook(database, book.id);
+      } catch (error) {
+        if (quiesced) {
+          try {
+            await windows.reloadCatalogReader(getBook(database, book.id));
+          } catch (reloadError) {
+            console.error(reloadError);
+          }
+        }
+        throw error;
+      } finally {
+        trashBusy = false;
+      }
+    },
+    mutates,
+  );
+  handle(
+    "restore-deleted-book",
+    async (entryId) => {
+      if (trashBusy || importing || replacing)
+        throw new LibraryError(
+          "invalid",
+          "Another import, replacement or Trash action is running.",
+        );
+      trashBusy = true;
+      try {
+        return await restoreDeletedBook({ root, database }, entryId);
+      } catch (error) {
+        if (error instanceof RestoreConflict) {
+          try {
+            await windows.openCatalogReader(getBook(database, error.bookId));
+          } catch (readerError) {
+            console.error(readerError);
+          }
+        }
+        throw error;
+      } finally {
+        trashBusy = false;
+      }
+    },
+    mutates,
+  );
+  handle("restore-revision", async (entryId, mode, expectedCurrentId) => {
+    if (trashBusy || importing || replacing)
+      throw new LibraryError(
+        "invalid",
+        "Another import, replacement or Trash action is running.",
+      );
+    if (mode === "current" && typeof expectedCurrentId !== "string")
+      throw new LibraryError(
+        "invalid",
+        "Refresh Trash before restoring the current revision.",
+      );
+    const contents = windows.library();
+    if (!contents) throw new Error("The library window is closed.");
+    trashBusy = true;
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    const navigating = (details: {
+      isMainFrame: boolean;
+      isSameDocument: boolean;
+    }) => {
+      if (details.isMainFrame && !details.isSameDocument) stop();
+    };
+    contents.once("destroyed", stop);
+    contents.on("did-start-navigation", navigating);
+    let quiesced: string | null = null;
+    let result: Awaited<ReturnType<typeof restoreRevision>> | undefined;
+    try {
+      result = await restoreRevision({ root, database }, entryId, mode, {
+        ...(typeof expectedCurrentId === "string" ? { expectedCurrentId } : {}),
+        signal: controller.signal,
+        beforeCommit(bookId) {
+          const reader = windows.catalogReader(bookId);
+          if (reader) {
+            readers.quiesce(reader.id);
+            quiesced = bookId;
+          }
+        },
+      });
+      changed();
+      return result;
+    } catch (error) {
+      if (error instanceof RestoreConflict) {
+        try {
+          await windows.openCatalogReader(getBook(database, error.bookId));
+        } catch (readerError) {
+          console.error(readerError);
+        }
+      }
+      throw error;
+    } finally {
+      if (quiesced) {
+        try {
+          await windows.reloadCatalogReader(getBook(database, quiesced));
+        } catch (error) {
+          const warning = `The reader could not reload (${error instanceof Error ? error.message : String(error)}). Close it and reopen the book from the library.`;
+          if (result) result.warnings.push(warning);
+          else console.error(warning);
+        }
+      }
+      trashBusy = false;
+      if (!contents.isDestroyed()) {
+        contents.off("destroyed", stop);
+        contents.off("did-start-navigation", navigating);
+      }
+    }
+  });
   handle("replace-file", async (bookId) => {
     const book = getBook(database, bookId as string);
-    if (replacing || importing)
+    if (replacing || importing || trashBusy)
       throw new LibraryError(
         "invalid",
         "Another import or replacement is running.",
@@ -231,7 +428,7 @@ export function registerLibraryIpc({
   handle("import", async (kind, sectionId) => {
     if (kind !== "files" && kind !== "folders")
       throw new LibraryError("invalid", "Choose files or folders to import.");
-    if (importing || replacing)
+    if (importing || replacing || trashBusy)
       throw new LibraryError(
         "invalid",
         "Another import or replacement is running.",
@@ -291,6 +488,57 @@ export function registerLibraryIpc({
         return null;
       const summary = await importBatch({ root, database }, choice.filePaths, {
         inspect: inspectBook,
+        async onRestoreConflict(bookId) {
+          try {
+            await windows.openCatalogReader(getBook(database, bookId));
+          } catch (error) {
+            console.error(error);
+          }
+        },
+        chooseTrash(prompt: TrashMatchPrompt) {
+          return new Promise<TrashChoice>((resolve) => {
+            const token = randomUUID();
+            const finish = (choice: TrashChoice) => {
+              controller.signal.removeEventListener("abort", abort);
+              pendingTrash = null;
+              resolve(choice);
+            };
+            const abort = () => finish({ action: "cancel" });
+            pendingTrash = { token, resolve: finish };
+            controller.signal.addEventListener("abort", abort, { once: true });
+            if (controller.signal.aborted) abort();
+            else
+              contents.send("library:import-trash-match", { ...prompt, token });
+          });
+        },
+        chooseDuplicate(prompt: DuplicatePrompt) {
+          return new Promise<DuplicateChoice>((resolve) => {
+            const token = randomUUID();
+            const finish = (choice: DuplicateChoice) => {
+              controller.signal.removeEventListener("abort", abort);
+              duplicateChoice = null;
+              resolve(choice);
+            };
+            const abort = () => finish({ action: "skip" });
+            duplicateChoice = { token, resolve: finish };
+            controller.signal.addEventListener("abort", abort, { once: true });
+            if (controller.signal.aborted) abort();
+            else
+              contents.send("library:import-duplicate", { ...prompt, token });
+          });
+        },
+        beforeReplacement(bookId) {
+          const reader = windows.catalogReader(bookId);
+          if (reader) readers.quiesce(reader.id);
+        },
+        async afterReplacement(bookId) {
+          try {
+            await windows.reloadCatalogReader(getBook(database, bookId));
+            return null;
+          } catch (error) {
+            return `The reader could not reload (${error instanceof Error ? error.message : String(error)}). Close it and reopen the book from the library.`;
+          }
+        },
         sectionId: (sectionId as string | null | undefined) ?? null,
         signal: controller.signal,
         onProgress(progress) {

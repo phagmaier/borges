@@ -41,12 +41,38 @@ export function SelectionBar({
   const [coverBusy, setCoverBusy] = useState(false);
   const [replacing, setReplacing] = useState<BookSummary | null>(null);
   const [replaceBusy, setReplaceBusy] = useState(false);
+  const deleteConfirm = useRef<HTMLDialogElement>(null);
+  const [deleting, setDeleting] = useState(false);
   const confirm = useRef<HTMLDialogElement>(null);
   const ids = useId();
   const books = (n: number) => `${n} ${n === 1 ? "book" : "books"}`;
   const chosen = choices.find((entry) => entry.id === target);
   const bookIds = selected.map((book) => book.id);
   const count = selected.length;
+
+  async function deleteSelected() {
+    deleteConfirm.current?.close();
+    setDeleting(true);
+    const failures: string[] = [];
+    let succeeded = 0;
+    try {
+      for (const book of selected) {
+        try {
+          const result = await window.borges.library.deleteBook(book.id);
+          if (result.ok) succeeded++;
+          else failures.push(`${book.title}: ${result.message}`);
+        } catch (error) {
+          failures.push(`${book.title}: ${String(error)}`);
+        }
+      }
+      onMessage(
+        `Moved ${books(succeeded)} to Trash.${failures.length ? ` Not deleted: ${failures.join("; ")}` : ""}`,
+        failures.length > 0,
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function apply(action: StatusAction, targets: BookSummary[]) {
     const failures: string[] = [];
@@ -222,6 +248,29 @@ export function SelectionBar({
           Remove from {currentSection.name}
         </button>
       ) : null}
+      <button
+        type="button"
+        disabled={deleting}
+        onClick={() => deleteConfirm.current?.showModal()}
+      >
+        {deleting ? "Moving to Trash…" : "Move to Trash…"}
+      </button>
+      <dialog ref={deleteConfirm} aria-labelledby={`${ids}-delete`}>
+        <h2 id={`${ids}-delete`}>Move {books(count)} to Trash?</h2>
+        <p>
+          Open readers save their position and close first. You can restore
+          these books with their details, status, position and surviving
+          sections from Trash. Source files stay untouched.
+        </p>
+        <div className="actions">
+          <button type="button" onClick={() => void deleteSelected()}>
+            Move to Trash
+          </button>
+          <button type="button" onClick={() => deleteConfirm.current?.close()}>
+            Cancel
+          </button>
+        </div>
+      </dialog>
       <button type="button" onClick={onClear}>
         Clear selection
       </button>

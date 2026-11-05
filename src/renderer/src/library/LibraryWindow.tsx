@@ -9,11 +9,18 @@ import type {
 import { developmentBooks } from "../../../shared/windows";
 import { BookResults, type Layout, RESULT_BATCH } from "./BookResults";
 import { ContinueReading } from "./ContinueReading";
-import { ImportButtons, ImportStatus, useImport } from "./ImportControls";
+import {
+  ImportButtons,
+  ImportDuplicateDialog,
+  ImportStatus,
+  ImportTrashDialog,
+  useImport,
+} from "./ImportControls";
 import { SectionActions } from "./SectionActions";
 import { SelectionBar } from "./SelectionBar";
 import { Sidebar } from "./Sidebar";
 import { StartupProblems } from "./StartupProblems";
+import { TrashView } from "./TrashView";
 import "./library.css";
 import {
   type Destination,
@@ -63,6 +70,7 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
     () => setLimit((value) => value + RESULT_BATCH),
     [],
   );
+  const [queryError, setQueryError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
@@ -187,8 +195,8 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
       if (!current) return;
       setBooks(unlessSame<BookSummary[] | null>(found));
       setOnlyArchived(archivedOnly);
-      setError(null);
-    })().catch((reason: unknown) => current && setError(String(reason)));
+      setQueryError(null);
+    })().catch((reason: unknown) => current && setQueryError(String(reason)));
     return () => {
       current = false;
     };
@@ -200,6 +208,8 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
     setAuthor("");
     setSubject("");
     setBooks(null);
+    setError(null);
+    setQueryError(null);
     setDestination(next);
   }
 
@@ -338,20 +348,38 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
               </details>
             </search>
           ) : null}
-          <fieldset className="layout">
-            <legend className="sr-only">Layout</legend>
-            {(["grid", "list"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={layout === option}
-                onClick={() => setLayout(option)}
-              >
-                {option === "grid" ? "Grid" : "List"}
-              </button>
-            ))}
-          </fieldset>
+          {view ? (
+            <fieldset className="layout">
+              <legend className="sr-only">Layout</legend>
+              {(["grid", "list"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={layout === option}
+                  onClick={() => setLayout(option)}
+                >
+                  {option === "grid" ? "Grid" : "List"}
+                </button>
+              ))}
+            </fieldset>
+          ) : null}
         </header>
+        {imports.trashMatch ? (
+          <ImportTrashDialog
+            key={imports.trashMatch.token}
+            prompt={imports.trashMatch}
+            onChoose={imports.chooseTrash}
+            onCancel={imports.cancel}
+          />
+        ) : null}
+        {imports.duplicate ? (
+          <ImportDuplicateDialog
+            key={imports.duplicate.token}
+            prompt={imports.duplicate}
+            onChoose={imports.choose}
+            onCancel={imports.cancel}
+          />
+        ) : null}
         <ImportStatus
           state={imports.state}
           onCancel={imports.cancel}
@@ -371,12 +399,13 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
             sections={sections ?? []}
             currentSection={currentSection}
             onClear={() => setSelected(new Set())}
-            onMessage={(message, problem) =>
-              problem ? setError(message) : setNotice(message)
-            }
+            onMessage={(message, problem) => {
+              setError(problem ? message : null);
+              setNotice(problem ? null : message);
+            }}
           />
         ) : null}
-        {error ? <p role="alert">{error}</p> : null}
+        {error || queryError ? <p role="alert">{error ?? queryError}</p> : null}
         {notice ? (
           <p className="notice" role="status">
             {notice}
@@ -388,45 +417,55 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
         !narrowed ? (
           <ContinueReading books={books} onOpen={open} />
         ) : null}
-        <p className="result-count" aria-live="polite">
-          {books === null
-            ? "Loading…"
-            : `${count} ${count === 1 ? "book" : "books"}`}
-        </p>
-        {books === null ? null : books.length > 0 ? (
-          <BookResults
-            books={books}
-            layout={layout}
-            limit={limit}
-            onShowMore={showMore}
-            selected={selected}
-            onToggle={toggle}
-            onOpen={open}
-          />
-        ) : narrowed ? (
-          <div className="empty">
-            <p>No books in {title} match this search.</p>
-            <button type="button" onClick={clearNarrowing}>
-              Clear search and filters
-            </button>
-          </div>
-        ) : onlyArchived ? (
-          <div className="empty">
-            <p>Every book in this library is archived.</p>
-            <button type="button" onClick={() => select({ kind: "archive" })}>
-              Show Archive
-            </button>
-          </div>
+        {destination.kind === "trash" ? (
+          <TrashView />
         ) : (
-          <div className="empty">
-            <p>{emptyViewMessage(destination)}</p>
-            {destination.kind === "all" ? (
-              <p className="quiet">
-                Use Import files… or Import folder… to copy PDF and EPUB books
-                into the library. The original files are left unchanged.
-              </p>
-            ) : null}
-          </div>
+          <>
+            <p className="result-count" aria-live="polite">
+              {books === null
+                ? "Loading…"
+                : `${count} ${count === 1 ? "book" : "books"}`}
+            </p>
+            {books === null ? null : books.length > 0 ? (
+              <BookResults
+                books={books}
+                layout={layout}
+                limit={limit}
+                onShowMore={showMore}
+                selected={selected}
+                onToggle={toggle}
+                onOpen={open}
+              />
+            ) : narrowed ? (
+              <div className="empty">
+                <p>No books in {title} match this search.</p>
+                <button type="button" onClick={clearNarrowing}>
+                  Clear search and filters
+                </button>
+              </div>
+            ) : onlyArchived ? (
+              <div className="empty">
+                <p>Every book in this library is archived.</p>
+                <button
+                  type="button"
+                  onClick={() => select({ kind: "archive" })}
+                >
+                  Show Archive
+                </button>
+              </div>
+            ) : (
+              <div className="empty">
+                <p>{emptyViewMessage(destination)}</p>
+                {destination.kind === "all" ? (
+                  <p className="quiet">
+                    Use Import files… or Import folder… to copy PDF and EPUB
+                    books into the library. The original files are left
+                    unchanged.
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </>
         )}
         <footer className="development">
           <h2>Development</h2>

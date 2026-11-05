@@ -1,6 +1,7 @@
 import type { Dirent } from "node:fs";
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
+import type { DuplicateChoice, DuplicatePrompt } from "./duplicates.ts";
 import type { InspectBook } from "./extraction.ts";
 import { formatFromName } from "./formats.ts";
 import {
@@ -9,8 +10,12 @@ import {
   ImportError,
   type ImportStep,
 } from "./import.ts";
+import { getBook } from "./query.ts";
 import type { LibraryHandle } from "./recovery.ts";
+import { restoreRevision } from "./revision-restore.ts";
 import { collator, LibraryError } from "./rules.ts";
+import { RestoreConflict, restoreDeletedBook } from "./trash.ts";
+import type { TrashChoice, TrashMatchPrompt } from "./trash-matches.ts";
 
 // Batch import of selected files and folders (spec, Import and duplicates).
 // Folders are walked first: ordinary subdirectories recurse, directory
@@ -21,6 +26,7 @@ import { collator, LibraryError } from "./rules.ts";
 // marks the remaining files cancelled.
 
 export type ImportOutcomeKind =
+  | "restored"
   | "imported"
   | "skipped"
   | "unsupported"
@@ -35,6 +41,8 @@ export interface ImportOutcome {
   message: string;
   /** The new book, for imported files. */
   bookId?: string;
+  /** A replacement keeps target memberships rather than joining the import section. */
+  replaced?: boolean;
   /** The live book with identical content, for skipped duplicates. */
   existing?: ExistingBook;
 }
@@ -55,6 +63,11 @@ export interface ImportProgress {
 
 export interface ImportBatchOptions {
   inspect?: InspectBook;
+  onRestoreConflict?: (bookId: string) => Promise<void>;
+  chooseTrash?: (prompt: TrashMatchPrompt) => Promise<TrashChoice>;
+  chooseDuplicate?: (prompt: DuplicatePrompt) => Promise<DuplicateChoice>;
+  beforeReplacement?: (bookId: string) => void;
+  afterReplacement?: (bookId: string) => Promise<string | null>;
   /** Imported books join this section; null or absent means Unfiled. */
   sectionId?: string | null;
   signal?: AbortSignal;
@@ -129,32 +142,102 @@ async function importOne(
   library: LibraryHandle,
   entry: { name: string; path: string },
   sectionId: string | null,
-  { signal, onImported, checkpoint, pace, inspect }: ImportBatchOptions,
+  {
+    signal,
+    onImported,
+    checkpoint,
+    pace,
+    inspect,
+    chooseDuplicate,
+    chooseTrash,
+    onRestoreConflict,
+    beforeReplacement,
+    afterReplacement,
+  }: ImportBatchOptions,
 ): Promise<ImportOutcome> {
   const { name } = entry;
+  let quiesced: string | null = null;
+  let outcome: ImportOutcome | undefined;
   try {
     const added = await addFileAsNewBook(library, entry.path, {
       sectionId,
+      ...(chooseTrash ? { chooseTrash } : {}),
+      async restoreTrash(candidate, mode) {
+        try {
+          if (mode === "book") {
+            const restored = await restoreDeletedBook(
+              library,
+              candidate.entryId,
+              undefined,
+              signal,
+            );
+            return {
+              bookId: restored.bookId,
+              title: getBook(library.database, restored.bookId).title,
+              warnings: [
+                ...restored.warnings,
+                ...(restored.missingSections.length
+                  ? [
+                      `Sections no longer available: ${restored.missingSections.join(", ")}.`,
+                    ]
+                  : []),
+                ...(restored.archived ? ["The book remains archived."] : []),
+              ],
+            };
+          }
+          return await restoreRevision(library, candidate.entryId, mode, {
+            ...(signal ? { signal } : {}),
+            expectedCurrentId: candidate.currentRevisionId,
+            beforeCommit(bookId) {
+              beforeReplacement?.(bookId);
+              quiesced = bookId;
+            },
+          });
+        } catch (error) {
+          if (error instanceof RestoreConflict)
+            await onRestoreConflict?.(error.bookId);
+          throw error;
+        }
+      },
+      ...(chooseDuplicate ? { chooseDuplicate } : {}),
+      beforeReplacement(bookId) {
+        beforeReplacement?.(bookId);
+        quiesced = bookId;
+      },
       ...(inspect ? { inspect } : {}),
       ...(signal ? { signal } : {}),
       ...(checkpoint ? { checkpoint: (step) => checkpoint(name, step) } : {}),
       ...(pace ? { pace } : {}),
     });
     onImported?.(added.bookId);
-    return {
+    outcome = {
       name,
       kind: "imported",
       bookId: added.bookId,
+      ...(added.replaced ? { replaced: true } : {}),
       message:
-        (sectionId !== null && !added.joinedSection
-          ? `Imported as “${added.title}” into Unfiled: the target section was deleted during the import.`
-          : `Imported as “${added.title}”.`) +
+        (added.replaced
+          ? `Replaced file for “${added.title}”; previous file and position kept in Trash.`
+          : sectionId !== null && !added.joinedSection
+            ? `Imported as “${added.title}” into Unfiled: the target section was deleted during the import.`
+            : `Imported as “${added.title}”.`) +
         added.warnings.map((warning) => ` Warning: ${warning}`).join(""),
     };
+    return outcome;
   } catch (error) {
     if (!(error instanceof ImportError))
       return { name, kind: "failed", message: errorText(error) };
     switch (error.code) {
+      case "restored":
+        if (error.restored) onImported?.(error.restored.bookId);
+        outcome = {
+          name,
+          kind: "restored",
+          message: error.message,
+          ...(error.restored ? { bookId: error.restored.bookId } : {}),
+        };
+        return outcome;
+      case "skipped":
       case "duplicate":
         return {
           name,
@@ -175,6 +258,11 @@ async function importOne(
         return { name, kind: "unsupported", message: error.message };
       default:
         return { name, kind: "failed", message: error.message };
+    }
+  } finally {
+    if (quiesced && afterReplacement) {
+      const warning = await afterReplacement(quiesced);
+      if (warning && outcome) outcome.message += ` Warning: ${warning}`;
     }
   }
 }
@@ -370,6 +458,7 @@ export function countOutcomes(
 ): Record<ImportOutcomeKind, number> {
   const counts: Record<ImportOutcomeKind, number> = {
     imported: 0,
+    restored: 0,
     skipped: 0,
     unsupported: 0,
     failed: 0,

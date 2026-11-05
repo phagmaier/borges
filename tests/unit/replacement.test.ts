@@ -445,3 +445,43 @@ it.each([
     });
   },
 );
+
+it.each(["prompt", "cover-pending", "committed"])(
+  "reconciles import killed at metadata choice/replacement %s",
+  async (step) => {
+    const { added } = await seed();
+    editMetadata(library.database, added.bookId, {
+      title: "Fresh title",
+      authors: ["Ana"],
+    });
+    const root = library.root;
+    library.close();
+    const child = await startChild(
+      "duplicate-and-stop",
+      root,
+      `at ${step}`,
+      epub,
+      step,
+      added.bookId,
+    );
+    await kill(child);
+    library = openLibrary({ root });
+    const report = await reconcileOperations(library);
+    expect(report.unrecognized).toEqual([]);
+    expect(readFileSync(join(root, added.path))).toEqual(readFileSync(pdf));
+    expect(readdirSync(join(root, "staging"))).toEqual([]);
+    const trash = library.database
+      .prepare("SELECT revision_id FROM trash_entries")
+      .all();
+    if (step === "committed") {
+      expect(getBook(library.database, added.bookId).format).toBe("epub");
+      expect(trash).toEqual([{ revision_id: added.revisionId }]);
+      expect(readdirSync(join(root, "files"))).toHaveLength(2);
+    } else {
+      expect(getBook(library.database, added.bookId).format).toBe("pdf");
+      expect(trash).toEqual([]);
+      expect(readdirSync(join(root, "files"))).toHaveLength(1);
+      expect(readdirSync(join(root, "covers"))).toEqual([]);
+    }
+  },
+);

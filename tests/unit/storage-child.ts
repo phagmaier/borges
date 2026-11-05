@@ -6,10 +6,13 @@ import {
   type ImportStep,
   replaceBookFile,
 } from "../../src/library/import.ts";
+import { importBatch } from "../../src/library/import-batch.ts";
 import {
   beginReaderSession,
   saveProgress,
 } from "../../src/library/progress.ts";
+import { restoreRevision } from "../../src/library/revision-restore.ts";
+import { deleteBook, restoreDeletedBook } from "../../src/library/trash.ts";
 import { openLibrary } from "../../src/storage/catalog.ts";
 import { acquireRootLock } from "../../src/storage/lock.ts";
 import { catalogMigrations } from "../../src/storage/schema.ts";
@@ -64,6 +67,43 @@ if (mode === "hold-lock") {
     console.log(`acked ${ack.sequence}`);
   }
   block();
+} else if (mode === "revision-and-stop") {
+  const [entryId, restoreMode, step] = extra as [string, string, string];
+  const library = openLibrary({ root });
+  const checkpoint = (reached: string) => {
+    if (reached === step) {
+      console.log(`at ${step}`);
+      block();
+    }
+  };
+  await restoreRevision(library, entryId, restoreMode, {
+    checkpoint,
+    publicationCheckpoint: checkpoint,
+  });
+  throw new Error(`never reached ${step}`);
+} else if (mode === "trash-choice-and-stop") {
+  const [source] = extra as [string];
+  const library = openLibrary({ root });
+  await importBatch(library, [source], {
+    chooseTrash: async () => {
+      console.log("at prompt");
+      block();
+      return { action: "cancel" };
+    },
+  });
+  throw new Error("never reached prompt");
+} else if (mode === "trash-and-stop") {
+  const [action, id, step] = extra as [string, string, string];
+  const library = openLibrary({ root });
+  const checkpoint = (reached: string) => {
+    if (reached === step) {
+      console.log(`at ${step}`);
+      block();
+    }
+  };
+  if (action === "delete") deleteBook(library.database, id, checkpoint);
+  else await restoreDeletedBook(library, id, checkpoint);
+  throw new Error(`never reached ${step}`);
 } else if (mode === "cover-and-stop") {
   const [source, step] = extra as [string, ImportStep];
   const library = openLibrary({ root });
@@ -95,10 +135,23 @@ if (mode === "hold-lock") {
     },
   });
   throw new Error(`never reached ${step}`);
-} else if (mode === "replace-and-stop") {
+} else if (mode === "replace-and-stop" || mode === "duplicate-and-stop") {
   const [source, step, bookId] = extra as [string, ImportStep, string];
   const library = openLibrary({ root });
-  await replaceBookFile(library, bookId, source, {
+  const publish =
+    mode === "duplicate-and-stop"
+      ? (options: Parameters<typeof addFileAsNewBook>[2]) =>
+          addFileAsNewBook(library, source, options)
+      : (options: Parameters<typeof replaceBookFile>[3]) =>
+          replaceBookFile(library, bookId, source, options);
+  await publish({
+    chooseDuplicate: async () => {
+      if (String(step) === "prompt") {
+        console.log("at prompt");
+        block();
+      }
+      return { action: "replace", bookId };
+    },
     inspect: async () => ({
       title: "Fresh title",
       authors: ["Ana"],

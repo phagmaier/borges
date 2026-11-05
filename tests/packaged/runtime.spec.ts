@@ -623,3 +623,142 @@ test("imports and extracts offline from the relocated bundle and retains extract
     await application?.close();
   }
 });
+
+test("relocated Trash deletion and restore survive separate process restarts with the saved reader position", async () => {
+  const seeded = openLibrary({ root: libraryFor(profile) });
+  await addFileAsNewBook(seeded, resolve("tests/fixtures/known.pdf"));
+  seeded.close();
+  let application: ElectronApplication | undefined;
+  try {
+    application = await launch();
+    let { library } = await catalogOf(application);
+    let opened = application.waitForEvent("window");
+    await library
+      .getByRole("list", { name: "Books" })
+      .getByRole("button", { name: "known", exact: true })
+      .click();
+    let reader = await opened;
+    let ui = reader.frameLocator('iframe[title="Book content"]');
+    await expect(ui.getByRole("status")).toHaveText("Ready");
+    const surface = ui.getByRole("region", { name: "Reading surface" });
+    await surface.focus();
+    await surface.press("ArrowRight");
+    await expect(ui.locator("#location")).toHaveText("Page 2 of 3");
+    await library.getByRole("checkbox", { name: "Select known" }).check();
+    await library
+      .getByRole("button", { name: "Move to Trash…", exact: true })
+      .click();
+    await library
+      .getByRole("dialog")
+      .getByRole("button", { name: "Move to Trash", exact: true })
+      .click();
+    await expect(library.getByRole("status")).toContainText(
+      "Moved 1 book to Trash",
+    );
+    expect(application.windows()).toHaveLength(1);
+    await application.close();
+    application = await launch();
+    ({ library } = await catalogOf(application));
+    await expect(library.locator(".result-count")).toHaveText("0 books");
+    await library
+      .getByRole("navigation", { name: "Library" })
+      .getByRole("button", { name: "Trash", exact: true })
+      .click();
+    const trash = library.getByRole("region", { name: "Trash contents" });
+    await expect(trash).toContainText("Page 2");
+    await trash.getByRole("button", { name: "Restore book" }).click();
+    await expect(trash.getByRole("status")).toContainText("Restored “known”");
+    await application.close();
+    application = await launch();
+    ({ library } = await catalogOf(application));
+    opened = application.waitForEvent("window");
+    await library
+      .getByRole("list", { name: "Books" })
+      .getByRole("button", { name: "known", exact: true })
+      .click();
+    reader = await opened;
+    ui = reader.frameLocator('iframe[title="Book content"]');
+    await expect(ui.locator("#location")).toHaveText("Page 2 of 3");
+  } finally {
+    await application?.close();
+  }
+});
+
+test("relocated Trash-only import restores an earlier revision and its position across process restarts", async () => {
+  const seeded = openLibrary({ root: libraryFor(profile) });
+  const { bookId } = await addFileAsNewBook(
+    seeded,
+    resolve("tests/fixtures/known.pdf"),
+  );
+  seeded.close();
+  let application: ElectronApplication | undefined;
+  try {
+    application = await launch();
+    let { library } = await catalogOf(application);
+    await library.evaluate(async (id) => {
+      const result = await window.borges.library.editMetadata(id, {
+        title: "Personal Atlas",
+      });
+      if (!result.ok) throw new Error(result.message);
+    }, bookId);
+    const opened = application.waitForEvent("window");
+    await library
+      .getByRole("list", { name: "Books" })
+      .getByRole("button", { name: "Personal Atlas", exact: true })
+      .click();
+    const reader = await opened;
+    const ui = reader.frameLocator('iframe[title="Book content"]');
+    await expect(ui.getByRole("status")).toHaveText("Ready");
+    const surface = ui.getByRole("region", { name: "Reading surface" });
+    await surface.focus();
+    await surface.press("ArrowRight");
+    await expect(ui.locator("#location")).toHaveText("Page 2 of 3");
+    await application.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = (async () => ({
+        canceled: false,
+        filePaths: [path],
+      })) as typeof dialog.showOpenDialog;
+    }, resolve("tests/fixtures/import-metadata.epub"));
+    await library.evaluate(async (id) => {
+      const result = await window.borges.library.replaceFile(id);
+      if (!result.ok) throw new Error(result.message);
+    }, bookId);
+    await application.close();
+    application = await launch();
+    ({ library } = await catalogOf(application));
+    await application.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = (async () => ({
+        canceled: false,
+        filePaths: [path],
+      })) as typeof dialog.showOpenDialog;
+    }, resolve("tests/fixtures/known.pdf"));
+    await library
+      .getByRole("button", { name: "Import files…", exact: true })
+      .click();
+    const match = library.getByRole("dialog", {
+      name: "Identical content in Trash",
+    });
+    await match.getByRole("radio").check();
+    await match
+      .getByRole("button", { name: "Restore as current", exact: true })
+      .click();
+    await expect(library.getByTestId("import-counts")).toHaveText(
+      "1 restored/reused",
+    );
+    await application.close();
+    application = await launch();
+    ({ library } = await catalogOf(application));
+    const resumed = application.waitForEvent("window");
+    await library
+      .getByRole("list", { name: "Books" })
+      .getByRole("button", { name: "Personal Atlas", exact: true })
+      .click();
+    await expect(
+      (await resumed)
+        .frameLocator('iframe[title="Book content"]')
+        .locator("#location"),
+    ).toHaveText("Page 2 of 3");
+  } finally {
+    await application?.close();
+  }
+});

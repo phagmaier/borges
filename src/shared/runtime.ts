@@ -1,3 +1,23 @@
+import type {
+  RestoredImportInfo,
+  TrashChoice,
+  TrashMatchPrompt,
+} from "../library/trash-matches";
+
+export type {
+  TrashCandidate,
+  TrashChoice,
+  TrashMatchPrompt,
+} from "../library/trash-matches";
+
+import type { RestoredBook, TrashListing } from "../library/trash";
+
+export type { RestoredBook, TrashEntry, TrashListing } from "../library/trash";
+
+import type { DuplicateChoice, DuplicatePrompt } from "../library/duplicates";
+
+export type { DuplicateChoice, DuplicatePrompt } from "../library/duplicates";
+
 import type { MetadataEdit } from "../library/books";
 import type { ImportProgress, ImportSummary } from "../library/import-batch";
 import type { StoredSizing } from "../library/progress";
@@ -103,6 +123,21 @@ export interface BorgesApi {
   /** Library-window requests; main refuses every other sender. */
   library: {
     /** Unresolved recovery diagnostics from this startup, library window only. */
+    restoreRevision(
+      entryId: string,
+      mode: "current" | "separate",
+      expectedCurrentId?: string,
+    ): Promise<LibraryResult<RestoredImportInfo>>;
+    resolveTrashMatch(
+      token: string,
+      choice: TrashChoice,
+    ): Promise<LibraryResult<null>>;
+    onImportTrashMatch(
+      listener: (prompt: TrashMatchPrompt & { token: string }) => void,
+    ): () => void;
+    trash(): Promise<LibraryResult<TrashListing>>;
+    deleteBook(bookId: string): Promise<LibraryResult<{ id: string }>>;
+    restoreDeletedBook(entryId: string): Promise<LibraryResult<RestoredBook>>;
     startupProblems(): Promise<LibraryResult<string[]>>;
     /** Books matching a query, All Books by default. */
     books(query?: BookQuery): Promise<LibraryResult<BookSummary[]>>;
@@ -168,6 +203,13 @@ export interface BorgesApi {
       sectionId: string | null,
     ): Promise<LibraryResult<ImportSummary | null>>;
     /** Cancel the running import; false if none was running. */
+    resolveDuplicate(
+      token: string,
+      choice: DuplicateChoice,
+    ): Promise<LibraryResult<null>>;
+    onImportDuplicate(
+      listener: (prompt: DuplicatePrompt & { token: string }) => void,
+    ): () => void;
     cancelImport(): Promise<LibraryResult<boolean>>;
     onImportProgress(listener: (progress: ImportProgress) => void): () => void;
     /** Open or focus the book's reader window. */

@@ -1,6 +1,6 @@
 import type { LibraryView, SectionNode } from "../../../shared/runtime";
 
-/** A sidebar destination: a catalog view, or Trash (arrives in milestone 4). */
+/** A sidebar destination: a catalog view, or Trash. */
 export type Destination = LibraryView | { kind: "trash" };
 
 export const fixedDestinations: { destination: Destination; label: string }[] =
@@ -80,7 +80,7 @@ export function emptyViewMessage(destination: Destination): string {
     case "archive":
       return "Archived books appear here, out of the way of normal browsing.";
     case "trash":
-      return "Trash is empty. Deleted books and replaced files will appear here once deletion is available.";
+      return "Trash is empty.";
   }
 }
 

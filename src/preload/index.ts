@@ -2,8 +2,10 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   BorgesApi,
   DevelopmentApi,
+  DuplicatePrompt,
   ImportProgress,
   ProgressResult,
+  TrashMatchPrompt,
 } from "../shared/runtime";
 
 const development: DevelopmentApi = {
@@ -21,6 +23,22 @@ contextBridge.exposeInMainWorld("development", development);
 
 const borges: BorgesApi = {
   library: {
+    restoreRevision: (entryId, mode, expected) =>
+      ipcRenderer.invoke("library:restore-revision", entryId, mode, expected),
+    resolveTrashMatch: (token, choice) =>
+      ipcRenderer.invoke("library:resolve-trash-match", token, choice),
+    onImportTrashMatch(listener) {
+      const handler = (
+        _: unknown,
+        prompt: TrashMatchPrompt & { token: string },
+      ) => listener(prompt);
+      ipcRenderer.on("library:import-trash-match", handler);
+      return () => ipcRenderer.off("library:import-trash-match", handler);
+    },
+    trash: () => ipcRenderer.invoke("library:trash"),
+    deleteBook: (bookId) => ipcRenderer.invoke("library:delete-book", bookId),
+    restoreDeletedBook: (entryId) =>
+      ipcRenderer.invoke("library:restore-deleted-book", entryId),
     startupProblems: () => ipcRenderer.invoke("library:startup-problems"),
     books: (query) => ipcRenderer.invoke("library:books", query),
     filterTerms: (query) => ipcRenderer.invoke("library:filter-terms", query),
@@ -52,6 +70,16 @@ const borges: BorgesApi = {
       ipcRenderer.invoke("library:cover", bookId, token),
     importBooks: (kind, sectionId) =>
       ipcRenderer.invoke("library:import", kind, sectionId),
+    resolveDuplicate: (token, choice) =>
+      ipcRenderer.invoke("library:resolve-duplicate", token, choice),
+    onImportDuplicate(listener) {
+      const handler = (
+        _: unknown,
+        prompt: DuplicatePrompt & { token: string },
+      ) => listener(prompt);
+      ipcRenderer.on("library:import-duplicate", handler);
+      return () => ipcRenderer.off("library:import-duplicate", handler);
+    },
     cancelImport: () => ipcRenderer.invoke("library:cancel-import"),
     onImportProgress(listener) {
       const handler = (_: unknown, progress: ImportProgress) =>

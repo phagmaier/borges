@@ -17,6 +17,11 @@ import {
 import { immediate } from "../storage/transaction.ts";
 import { parseMetadataEdit } from "./books.ts";
 import { inspectCoverImage } from "./cover-image.ts";
+import {
+  type DuplicateChoice,
+  type DuplicatePrompt,
+  metadataDuplicates,
+} from "./duplicates.ts";
 import { type InspectBook, InspectionError } from "./extraction.ts";
 import {
   type BookFormat,
@@ -37,6 +42,13 @@ import {
   type ReplacementTarget,
 } from "./replacement.ts";
 import { foldKey, requireId } from "./rules.ts";
+import {
+  type RestoredImportInfo,
+  type TrashCandidate,
+  type TrashChoice,
+  type TrashMatchPrompt,
+  trashCandidates,
+} from "./trash-matches.ts";
 
 // "Add file as new book" on top of the operation protocol (see recovery.ts
 // for the states). Byte-identical live content is skipped, the book can join
@@ -52,6 +64,8 @@ export type ImportErrorCode =
   | "invalid-content"
   | "resource-limit"
   | "unreadable"
+  | "restored"
+  | "skipped"
   | "duplicate"
   | "cancelled"
   | "storage-failed";
@@ -66,15 +80,20 @@ export interface ExistingBook {
 export class ImportError extends Error {
   readonly code: ImportErrorCode;
   readonly existing: ExistingBook | undefined;
+  readonly restored: RestoredImportInfo | undefined;
   constructor(
     code: ImportErrorCode,
     message: string,
-    options?: ErrorOptions & { existing?: ExistingBook },
+    options?: ErrorOptions & {
+      existing?: ExistingBook;
+      restored?: RestoredImportInfo;
+    },
   ) {
     super(message, options);
     this.name = "ImportError";
     this.code = code;
     this.existing = options?.existing;
+    this.restored = options?.restored;
   }
 }
 
@@ -97,6 +116,18 @@ export interface AddBookOptions {
   /** Production content validation/extraction. Omit only for storage tests
    * and controlled catalog seeds which isolate the publication protocol. */
   inspect?: InspectBook;
+  /** Explicit restoration uses these internal publication constraints. */
+  skipTrashMatch?: boolean;
+  chooseTrash?: (prompt: TrashMatchPrompt) => Promise<TrashChoice>;
+  restoreTrash?: (
+    candidate: TrashCandidate,
+    mode: "book" | "current" | "separate",
+  ) => Promise<RestoredImportInfo>;
+  originalFileName?: string;
+  expectedDigest?: FileDigest;
+  beforeNewBookCommit?: () => void;
+  chooseDuplicate?: (prompt: DuplicatePrompt) => Promise<DuplicateChoice>;
+  beforeReplacement?: (bookId: string) => void;
   now?: () => number;
   /** Called at each protocol point; throwing simulates a failure there. */
   checkpoint?: (step: ImportStep) => void;
@@ -122,6 +153,7 @@ export interface AddedBook {
   size: number;
   /** Whether the requested section was joined (false when none requested). */
   joinedSection: boolean;
+  replaced: boolean;
   warnings: string[];
 }
 
@@ -174,7 +206,7 @@ async function publishBookFile(
   target?: ReplacementTarget,
 ): Promise<AddedBook> {
   const now = options.now ?? Date.now;
-  const sourceName = basename(sourcePath);
+  const sourceName = options.originalFileName ?? basename(sourcePath);
   const { signal } = options;
   const checkpoint = (step: ImportStep) => {
     options.checkpoint?.(step);
@@ -200,7 +232,7 @@ async function publishBookFile(
   const source = await openSource(sourcePath, sourceName);
 
   const operationId = randomUUID();
-  const bookId = target?.bookId ?? randomUUID();
+  let bookId = target?.bookId ?? randomUUID();
   const revisionId = randomUUID();
   const stagedPath = `staging/${operationId}.partial`;
   const publishedPath = `files/${revisionId}.${claimed}`;
@@ -252,6 +284,15 @@ async function publishBookFile(
     } finally {
       await source.close();
     }
+    if (
+      options.expectedDigest &&
+      (digest.sha256 !== options.expectedDigest.sha256 ||
+        digest.size !== options.expectedDigest.size)
+    )
+      throw new ImportError(
+        "invalid-content",
+        "The retained file changed while copying. Nothing was restored.",
+      );
     const actual = await sniffFormat(resolveLibraryPath(root, stagedPath));
     if (actual !== claimed) {
       throw new ImportError(
@@ -277,6 +318,57 @@ async function publishBookFile(
       target?.bookId,
     );
     if (existing) throw duplicateOf(sourceName, existing);
+    if (!target && !options.skipTrashMatch) {
+      const candidates = trashCandidates(database, digest);
+      if (candidates.length) {
+        if (!options.chooseTrash || !options.restoreTrash)
+          throw new ImportError(
+            "skipped",
+            `${sourceName} matches content in Trash; choose restore/reuse or cancel.`,
+          );
+        const choice = await options.chooseTrash({
+          name: sourceName,
+          candidates,
+        });
+        checkpoint("staged");
+        if (choice.action === "cancel")
+          throw new ImportError(
+            "skipped",
+            `${sourceName} was not imported; its matching Trash entry was kept.`,
+          );
+        const candidate = candidates.find((c) => c.entryId === choice.entryId);
+        if (
+          !candidate ||
+          !["book", "current", "separate"].includes(choice.mode) ||
+          (choice.mode === "book" && candidate.kind !== "book") ||
+          (choice.mode === "current" &&
+            (candidate.kind !== "revision" || candidate.ownerDeleted))
+        )
+          throw new ImportError(
+            "skipped",
+            "Choose a matching Trash entry and an available restore action.",
+          );
+        const current = trashCandidates(database, digest).find(
+          (c) => c.entryId === candidate.entryId,
+        );
+        if (
+          !current ||
+          current.revisionId !== candidate.revisionId ||
+          current.currentRevisionId !== candidate.currentRevisionId ||
+          current.ownerDeleted !== candidate.ownerDeleted
+        )
+          throw new ImportError(
+            "skipped",
+            "The matching Trash entry changed. Import this file again to choose its current state.",
+          );
+        const restored = await options.restoreTrash(candidate, choice.mode);
+        throw new ImportError(
+          "restored",
+          `Restored/reused “${restored.title}” from Trash.${restored.warnings.map((w) => ` ${w}`).join("")}`,
+          { restored },
+        );
+      }
+    }
     if (options.inspect) {
       const extracted = await options.inspect(
         resolveLibraryPath(root, stagedPath),
@@ -301,6 +393,63 @@ async function publishBookFile(
           warnings.push(
             `${field} metadata could not be extracted; a fallback was used.`,
           );
+        }
+      }
+      if (!target) {
+        const candidates = metadataDuplicates(
+          database,
+          extractedTitle,
+          authors,
+        );
+        if (candidates.length) {
+          if (!options.chooseDuplicate)
+            throw new ImportError(
+              "skipped",
+              `${sourceName} matches existing metadata; an explicit import choice is required.`,
+            );
+          const choice = await options.chooseDuplicate({
+            name: sourceName,
+            title,
+            authors,
+            candidates,
+          });
+          checkpoint("validated");
+          if (choice.action === "skip")
+            throw new ImportError(
+              "skipped",
+              `${sourceName} was skipped by choice.`,
+            );
+          if (choice.action === "replace") {
+            const candidate = candidates.find(
+              (c) => c.bookId === choice.bookId,
+            );
+            if (!candidate)
+              throw new ImportError(
+                "skipped",
+                "Choose a specific matching book to replace.",
+              );
+            target = {
+              bookId: candidate.bookId,
+              revisionId: candidate.revisionId,
+              beforeCommit: () => options.beforeReplacement?.(candidate.bookId),
+            };
+            checkReplacementTarget(database, target);
+            bookId = target.bookId;
+            // Adopt the selected target before any cover publication. Startup
+            // can now reconcile this operation exactly like manual replacement.
+            immediate(database, () =>
+              database
+                .prepare(
+                  "UPDATE recovery_operations SET kind = 'replace', book_id = ? WHERE id = ?",
+                )
+                .run(bookId, operationId),
+            );
+          } else if (choice.action !== "keep-both") {
+            throw new ImportError(
+              "skipped",
+              "The duplicate choice is invalid.",
+            );
+          }
         }
       }
       if (extracted.cover) {
@@ -344,10 +493,20 @@ async function publishBookFile(
     }
     immediate(database, () => {
       const at = now();
+      if (!target) options.beforeNewBookCommit?.();
       // Recheck against the committed catalog: content that became live
       // since the comparison above is still a duplicate.
       const existing = liveBooksWithDigest(database, digest, target?.bookId)[0];
       if (existing) throw duplicateOf(sourceName, existing);
+      if (
+        !target &&
+        !options.skipTrashMatch &&
+        trashCandidates(database, digest).length
+      )
+        throw new ImportError(
+          "skipped",
+          "This content became available in Trash during import. Import again to choose restore/reuse or cancel.",
+        );
       if (!target)
         database
           .prepare(
@@ -427,18 +586,22 @@ async function publishBookFile(
       path: publishedPath,
       ...digest,
       joinedSection,
+      replaced: !!target,
       warnings,
     };
   } catch (error) {
     if (committed) throw error;
     const failure =
-      error instanceof ImportError
-        ? error
-        : error instanceof InspectionError
-          ? new ImportError(error.code, `${sourceName}: ${error.message}`, {
-              cause: error,
-            })
-          : storageError(error, sourceName);
+      signal?.aborted &&
+      !(error instanceof ImportError && error.code === "restored")
+        ? new ImportError("cancelled", `Import of ${sourceName} was cancelled.`)
+        : error instanceof ImportError
+          ? error
+          : error instanceof InspectionError
+            ? new ImportError(error.code, `${sourceName}: ${error.message}`, {
+                cause: error,
+              })
+            : storageError(error, sourceName);
     await rollBackAfterFailure(library, coverOperationId, failure, now);
     await rollBackAfterFailure(library, operationId, failure, now);
     if (target)
