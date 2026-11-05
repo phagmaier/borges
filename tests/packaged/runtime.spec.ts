@@ -20,8 +20,11 @@ import {
   test,
 } from "@playwright/test";
 import { addFileAsNewBook } from "../../src/library/import";
+import type { BookSummary } from "../../src/library/query";
+import type { TrashListing } from "../../src/library/trash";
 import { openLibrary } from "../../src/storage/catalog";
 import { catalogMigrations } from "../../src/storage/schema";
+import { bookButton, openCatalogReader, value } from "../e2e/catalog";
 
 let root: string;
 let executablePath: string;
@@ -836,6 +839,279 @@ test("relocated Empty Trash reconciles a failed final commit and preserves live 
     } finally {
       verified.close();
     }
+  } finally {
+    await application?.close();
+  }
+});
+
+test("A12: a populated closed-folder backup restores readers, covers, Archive and Trash independently", async () => {
+  test.setTimeout(60_000);
+  const original = libraryFor(profile);
+  const backup = join(root, "Populated backup — 蘭");
+  const hidden = `${original}-unavailable`;
+  const sources = join(profile, "sources");
+  await mkdir(sources);
+  const names = ["known.pdf", "image-only.pdf", "import-metadata.epub"];
+  for (const name of names.slice(0, 2))
+    await cp(resolve("tests/fixtures", name), join(sources, name));
+  const coverSource = join(sources, "manual.png");
+  let application: ElectronApplication | undefined;
+  async function choose(path: string) {
+    if (!application) throw new Error("Application is closed");
+    await application.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = (async () => ({
+        canceled: false,
+        filePaths: [path],
+      })) as typeof dialog.showOpenDialog;
+    }, path);
+  }
+  try {
+    application = await launch();
+    let { library, info } = await catalogOf(application);
+    const { libraryId } = info.catalog;
+    await choose(sources);
+    await library.getByRole("button", { name: "Import folder…" }).click();
+    await expect(library.getByTestId("import-counts")).toHaveText("2 imported");
+    const books = await value<BookSummary[]>(library, "books");
+    const atlas = books.find((book) => book.title === "known");
+    const scan = books.find((book) => book.title === "image-only");
+    if (!atlas || !scan) throw new Error("Missing imported books");
+    await cp(
+      resolve("tests/fixtures/import-metadata.epub"),
+      join(sources, "import-metadata.epub"),
+    );
+    const shelf = await value<{ id: string }>(
+      library,
+      "createSection",
+      "Shelf",
+      null,
+    );
+    const section = await value<{ id: string }>(
+      library,
+      "createSection",
+      "Maps",
+      shelf.id,
+    );
+    await value(library, "addToSection", section.id, [atlas.id, scan.id]);
+    const metadata = {
+      title: "Personal atlas — 蘭",
+      authors: ["Mira"],
+      subjects: ["Private maps"],
+    };
+    await value(library, "editMetadata", atlas.id, metadata);
+    const coverBytes = await application.evaluate(({ nativeImage }) =>
+      Array.from(
+        nativeImage
+          .createFromBitmap(Buffer.from([80, 100, 240, 255]), {
+            width: 1,
+            height: 1,
+          })
+          .toPNG(),
+      ),
+    );
+    await writeFile(coverSource, Buffer.from(coverBytes));
+    await choose(coverSource);
+    const covered = await value<BookSummary>(library, "chooseCover", atlas.id);
+    expect(covered.coverToken).toMatch(/^[0-9a-f]{64}$/);
+    const { reader, ui } = await openCatalogReader(application, metadata.title);
+    const surface = ui.getByRole("region", { name: "Reading surface" });
+    await surface.focus();
+    await surface.press("ArrowRight");
+    await expect(ui.getByTestId("page-text")).toContainText("CEDAR SECOND");
+    await value(library, "finish", atlas.id);
+    await value(library, "archive", atlas.id);
+    await choose(join(sources, "import-metadata.epub"));
+    await value(library, "replaceFile", atlas.id);
+    await expect(ui.getByRole("status")).toHaveText("Ready");
+    await expect(ui.getByTestId("visible-text")).toContainText(
+      "ORCHID EPUB FIRST",
+    );
+    await ui.getByRole("button", { name: "Search", exact: true }).click();
+    const search = ui.getByRole("searchbox");
+    await search.fill("LANTERN PASSAGE 24.");
+    await expect(ui.locator("#search-status")).toHaveText("1 matches");
+    await search.press("Enter");
+    await search.press("Escape");
+    await ui.getByRole("spinbutton", { name: "Font size" }).fill("22");
+    await ui.getByRole("spinbutton", { name: "Font size" }).press("Tab");
+    await expect(ui.getByTestId("visible-text")).toContainText(
+      "LANTERN PASSAGE 24.",
+    );
+    // Repagination reports its completed location asynchronously. Establish
+    // the saved input before testing the backup's ability to recover it.
+    await expect
+      .poll(() => {
+        const database = new DatabaseSync(join(original, "catalog.sqlite"), {
+          readOnly: true,
+        });
+        try {
+          return database
+            .prepare("SELECT font_size FROM reader_settings WHERE book_id = ?")
+            .get(atlas.id)?.font_size;
+        } finally {
+          database.close();
+        }
+      })
+      .toBe(22);
+    await reader.close();
+    await value(library, "deleteBook", scan.id);
+    const retained = await value<TrashListing>(library, "trash");
+    expect(retained.entries).toHaveLength(2);
+    expect(
+      retained.entries.find((entry) => entry.kind === "revision"),
+    ).toMatchObject({ position: "Page 2" });
+    await application.close();
+    application = undefined;
+
+    // Copy the entire closed folder. Neither the old root, source files nor
+    // the original profile's caches are available at their recorded paths.
+    await cp(original, backup, { recursive: true });
+    await rename(original, hidden);
+    await rename(sources, `${sources}-unavailable`);
+    const originalDatabase = await readFile(join(hidden, "catalog.sqlite"));
+    const originalFiles = await readdir(join(hidden, "files"));
+    const originalCovers = await readdir(join(hidden, "covers"));
+    const copyProfile = await mkdtemp(join(root, "backup-profile-"));
+    application = await launch(copyProfile, { BORGES_LIBRARY_ROOT: backup });
+    ({ library, info } = await catalogOf(application));
+    expect(info.catalog).toMatchObject({
+      libraryId,
+      root: backup,
+      created: false,
+    });
+    expect(await value(library, "startupProblems")).toEqual([]);
+    expect(await value(library, "books")).toEqual([]); // Archive/Trash stay scoped.
+    expect(
+      await value(library, "books", { view: { kind: "archive" } }),
+    ).toMatchObject([
+      {
+        id: atlas.id,
+        ...metadata,
+        status: "finished",
+        archived: true,
+        sectionIds: [section.id],
+        coverToken: covered.coverToken,
+        format: "epub",
+      },
+    ]);
+    expect(
+      await value(library, "sections", { includeArchived: true }),
+    ).toMatchObject([
+      { id: shelf.id, children: [{ id: section.id, bookCount: 1 }] },
+    ]);
+    expect(await value(library, "trash")).toEqual(retained);
+    await library
+      .getByRole("navigation", { name: "Library" })
+      .getByRole("button", { name: "Archive", exact: true })
+      .click();
+    const image = bookButton(library, metadata.title).locator("img");
+    await expect
+      .poll(() => image.evaluate((img: HTMLImageElement) => img.naturalWidth))
+      .toBe(1);
+    const resumed = await openCatalogReader(application, metadata.title);
+    await expect(resumed.ui.getByTestId("visible-text")).toContainText(
+      "LANTERN PASSAGE 24.",
+    );
+    await expect(resumed.reader.getByTestId("restoration-notice")).toHaveCount(
+      0,
+    );
+    await expect(
+      resumed.ui.getByRole("spinbutton", { name: "Font size" }),
+    ).toHaveValue("22");
+    await resumed.reader.close();
+
+    // Switch back to retained bytes and their saved page in the copied root.
+    const old = retained.entries.find((entry) => entry.kind === "revision");
+    const deleted = retained.entries.find((entry) => entry.kind === "book");
+    if (!old || !deleted) throw new Error("Missing retained context");
+    await value(
+      library,
+      "restoreRevision",
+      old.id,
+      "current",
+      old.currentRevisionId,
+    );
+    const restored = await openCatalogReader(application, metadata.title);
+    await expect(restored.ui.getByTestId("page-text")).toContainText(
+      "CEDAR SECOND",
+    );
+    await expect(restored.ui.locator("#location")).toHaveText("Page 2 of 3");
+    await value(library, "restoreDeletedBook", deleted.id);
+    expect(await value(library, "books")).toMatchObject([
+      { id: scan.id, sectionIds: [section.id], status: "unread" },
+    ]);
+    const purge = await value<TrashListing>(library, "trash");
+    expect(purge.entries).toHaveLength(1); // Displaced EPUB only.
+    expect(
+      await value(
+        library,
+        "emptyTrash",
+        purge.entries.map((entry) => entry.id),
+        purge.bytes,
+      ),
+    ).toMatchObject({ purged: 1, failures: [] });
+    await expect(restored.ui.getByTestId("page-text")).toContainText(
+      "CEDAR SECOND",
+    );
+    await expect(image).toBeVisible(); // Purge preserves the manual cover.
+    await application.close();
+    application = undefined;
+
+    application = await launch(copyProfile, { BORGES_LIBRARY_ROOT: backup });
+    ({ library } = await catalogOf(application));
+    expect(await value(library, "startupProblems")).toEqual([]);
+    expect((await value<TrashListing>(library, "trash")).entries).toEqual([]);
+    expect(
+      await value(library, "books", { view: { kind: "archive" } }),
+    ).toMatchObject([
+      {
+        id: atlas.id,
+        ...metadata,
+        archived: true,
+        status: "finished",
+        format: "pdf",
+        sectionIds: [section.id],
+        coverToken: covered.coverToken,
+      },
+    ]);
+    await library
+      .getByRole("navigation", { name: "Library" })
+      .getByRole("button", { name: "Archive", exact: true })
+      .click();
+    const copiedReader = await openCatalogReader(application, metadata.title);
+    await expect(copiedReader.ui.locator("#location")).toHaveText(
+      "Page 2 of 3",
+    );
+    await application.close();
+    application = undefined;
+
+    expect(await readFile(join(hidden, "catalog.sqlite"))).toEqual(
+      originalDatabase,
+    );
+    expect(await readdir(join(hidden, "files"))).toEqual(originalFiles);
+    expect(await readdir(join(hidden, "covers"))).toEqual(originalCovers);
+    for (const name of names)
+      expect(await readFile(join(`${sources}-unavailable`, name))).toEqual(
+        await readFile(resolve("tests/fixtures", name)),
+      );
+    expect(
+      await readFile(join(`${sources}-unavailable`, "manual.png")),
+    ).toEqual(Buffer.from(coverBytes));
+    // The original still has its EPUB/Archive state and both retained entries.
+    application = await launch(profile, { BORGES_LIBRARY_ROOT: hidden });
+    ({ library } = await catalogOf(application));
+    expect(await value(library, "startupProblems")).toEqual([]);
+    expect(await value(library, "trash")).toEqual(retained);
+    expect(
+      await value(library, "books", { view: { kind: "archive" } }),
+    ).toMatchObject([
+      {
+        id: atlas.id,
+        title: metadata.title,
+        format: "epub",
+        coverToken: covered.coverToken,
+      },
+    ]);
   } finally {
     await application?.close();
   }
