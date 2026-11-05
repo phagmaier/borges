@@ -73,7 +73,7 @@ export function Cover({ book }: { book: BookSummary }) {
   return (
     <span
       ref={element}
-      className={`cover placeholder ${book.format}`}
+      className={`cover ${image ? "has-image" : "placeholder"} ${book.format}`}
       aria-hidden="true"
     >
       {image ? (

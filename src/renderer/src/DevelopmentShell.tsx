@@ -30,6 +30,17 @@ export function DevelopmentShell() {
   }, []);
 
   if (identity?.kind === "library") return <LibraryWindow runtime={runtime} />;
+  if (identity?.kind === "reader" && identity.book.source === "catalog")
+    return (
+      <>
+        {error ? <p role="alert">{error}</p> : null}
+        <CatalogReader
+          title={identity.book.title}
+          onOpenLibrary={() => run(window.development.openLibrary())}
+          onQuit={() => run(window.development.quit())}
+        />
+      </>
+    );
 
   return (
     <main className="shell reader-diagnostic">
@@ -44,15 +55,11 @@ export function DevelopmentShell() {
             Reader integration spike. Closing the library leaves this window
             open.
           </p>
-          {identity.book.source === "catalog" ? (
-            <CatalogReader />
-          ) : (
-            <iframe
-              title="Book content"
-              src={engineUrl(identity.book)}
-              sandbox="allow-scripts allow-same-origin"
-            />
-          )}
+          <iframe
+            title="Book content"
+            src={engineUrl(identity.book)}
+            sandbox="allow-scripts allow-same-origin"
+          />
           <button
             type="button"
             onClick={() => run(window.development.openLibrary())}

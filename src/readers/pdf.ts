@@ -88,9 +88,12 @@ export class PdfSession extends EventTarget implements ReaderSession {
       const pan = panPosition(surface);
       const page = await this.document.getPage(this.page);
       const natural = page.getViewport({ scale: 1 });
+      // Fit to the surface's outer box: its client area shrinks when the
+      // zoomed page brings scrollbars, which would otherwise change the fit,
+      // remove the scrollbars and redraw again in a loop.
       const fit = Math.min(
-        surface.clientWidth / natural.width,
-        surface.clientHeight / natural.height,
+        surface.offsetWidth / natural.width,
+        surface.offsetHeight / natural.height,
       );
       const viewport = page.getViewport({ scale: fit * this.sizing.zoom });
       const box = document.createElement("div");

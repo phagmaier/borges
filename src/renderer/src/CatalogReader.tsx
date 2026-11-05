@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { OpenedBook } from "../../shared/runtime";
 import { engineUrl } from "../../shared/windows";
+import "./reader.css";
 
 const ENGINE_ORIGIN = "borges://reader";
 
@@ -18,7 +19,15 @@ const restorationNotices: Record<string, string | null> = {
  * isolated engine frame only the book bytes and saved position, and relays
  * the engine's positions to the application with this session's identity.
  */
-export function CatalogReader() {
+export function CatalogReader({
+  title,
+  onOpenLibrary,
+  onQuit,
+}: {
+  title: string;
+  onOpenLibrary(): void;
+  onQuit(): void;
+}) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [book, setBook] = useState<OpenedBook | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -103,30 +112,47 @@ export function CatalogReader() {
   }, [book]);
 
   return (
-    <>
-      {alert ? <p role="alert">{alert}</p> : null}
-      {notice ? <p data-testid="restoration-notice">{notice}</p> : null}
-      <p
-        data-testid="save-status"
-        data-sequence={saved?.sequence ?? 0}
-        aria-live="polite"
-      >
-        {saved
-          ? `Position saved at ${new Date(saved.at).toLocaleTimeString()}`
-          : "Position not saved yet"}
-      </p>
-      {book ? (
-        <iframe
-          ref={frame}
-          title="Book content"
-          src={engineUrl({
-            id: book.bookId,
-            title: book.title,
-            source: "catalog",
-          })}
-          sandbox="allow-scripts allow-same-origin"
-        />
-      ) : null}
-    </>
+    <div className="reader-window">
+      <header className="reader-title">
+        <h1>{book?.title ?? title}</h1>
+        <p
+          data-testid="save-status"
+          data-sequence={saved?.sequence ?? 0}
+          aria-live="polite"
+        >
+          {saved
+            ? `Position saved at ${new Date(saved.at).toLocaleTimeString()}`
+            : "Position not saved yet"}
+        </p>
+        <span className="reader-window-actions">
+          <button type="button" onClick={onOpenLibrary}>
+            Open library
+          </button>
+          <button type="button" onClick={onQuit}>
+            Quit application
+          </button>
+        </span>
+      </header>
+      {/* Messages float over the page: resizing the book frame would
+          repaginate it and report a new position. */}
+      <div className="reader-stage">
+        <div className="reader-messages">
+          {alert ? <p role="alert">{alert}</p> : null}
+          {notice ? <p data-testid="restoration-notice">{notice}</p> : null}
+        </div>
+        {book ? (
+          <iframe
+            ref={frame}
+            title="Book content"
+            src={engineUrl({
+              id: book.bookId,
+              title: book.title,
+              source: "catalog",
+            })}
+            sandbox="allow-scripts allow-same-origin"
+          />
+        ) : null}
+      </div>
+    </div>
   );
 }

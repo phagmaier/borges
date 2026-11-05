@@ -523,3 +523,40 @@ The full-grid budget is separate from idle/reader memory and approximately twice
 Verification and review: `mise run check` passes types, Biome, 199 unit cases and build. The final `smoke` run passes 46 native cases; `smoke-packaged` passes all 10. An earlier full smoke had 45/46 passes and five focused repetitions had 4/5 passes: the unchanged A14 chapter-message test intermittently observed a newer EPUB save sequence with identical location/settings; its cause is not established. Its assertions remain intact; the final full rerun passes. Three mutations to disposable packaged copies fail the new case: eager loading reads 80 covers (bound <40), removing the job limit permits 13 decodes (bound 4), and skipping revocation retains 376 URLs (bound <40). Original packaged bytes were restored, then rebuilt. Direct code/test/spec review found no unresolved in-scope defect. No commit was created.
 
 Limits: synthetic covers, one machine/display scale, two cover traversals and five reader reopen cycles; partial cache eviction rather than a post-boot cold start. No extracted-cover generation, very long-session memory proof or final visual design is claimed. M3-06 and milestone-four import remain separate work.
+
+## Visual direction applied (M3-06)
+
+Done on 2026-11-04. A throwaway browser prototype (simulated data, no catalog) showed three structurally different directions for the library window and reader controls:
+
+- A, "Reading room": serif type on warm paper, covers at their real proportions, folded filters and a faint bottom bar in the reader.
+- B, "Catalog": dense sans type, a dark index sidebar, status chips and a full reader toolbar.
+- C, "Workbench": three panes with a details inspector and a reader side rail.
+
+Each was checked in light and dark for the library, a no-match search, an empty library and PDF/EPUB readers. The user chose **A for both the library and the reader**. The spec's "Visual direction" paragraph records the choice. The prototype was then removed, along with its dev script and lint override; it was never part of a build.
+
+Applied to the application:
+
+- `library.css`: palette, P052 serif interface type and shelf-aligned covers. Placeholders get a dashed box; images keep their own proportions (`Cover` now marks `has-image`).
+- Library window: one rounded search field. A Filters disclosure holds author, subject and Include archived; it floats over the results and its summary counts active filters. Escape folds it and returns focus to the summary.
+- Selection: checkboxes appear on hover, focus, when checked or while selecting. A selection bar floats at the bottom, keeping its position before the results in Tab order.
+- `ContinueReading`: up to six unarchived Currently Reading books, most recently opened first. It is shown only for All Books in grid layout without search or filters, and is built from the already-loaded results, so it adds no query and reads no cover files in List mode.
+- Catalog reader windows now fill the window. A quiet small-caps title line holds the save state and the Open library / Quit actions; alerts and the restoration notice float over the page. Diagnostic fixture readers keep the diagnostic shell.
+- Content frame: the book fills the frame and the controls sit in a bottom bar at 70% opacity (above 4.5:1 text contrast at rest), fully visible on hover or focus. Search shows `/` and Jump shows `:` hints, which are `aria-hidden` so accessible names are unchanged. In-book search floats over the page, the Ready status is visually hidden once announced, and catalog books hide the diagnostic snapshot tools. The reading surface keeps `color-scheme: light`, so EPUB pages keep their authored colours in dark mode. Under 640 px the bar stacks.
+
+Two regressions found during verification and fixed:
+
+1. **Alerts resized the book.** A shell alert in flow shrank the now-flexible book frame. The resulting repagination produced a genuine position report after the A14 test's forged sequence-999 write, so it failed 5/5 (`out-of-order` instead of `invalid`). Messages now overlay the page; the case passes.
+2. **PDF fit/redraw loop (latent adapter bug exposed by the new geometry).** `PdfSession` computed the fit from the surface's client area, which shrinks when a zoomed page adds a scrollbar. At the test geometry the surface alternated between 285 and 270 px and redrew about 60 times per second. The final text assertion then failed intermittently (3/12, versus 12/12 passes before the layout change). The fit now uses the surface's outer box. `#surface` also has `contain: size`, so a zoomed page cannot widen the bar's grid column. A new assertion in the PDF fit/zoom case requires zero redraws during 600 ms after restoration. It fails the old adapter 12/12 (35–36 redraws) and passes 12/12 with the fix.
+
+Native tests: `library-window.spec.ts` now opens Filters where needed and expects the new Tab order (Filters before Author). It also covers the strip: present only in grid All Books without narrowing, order by most recent open, books remain in results. It covers the active-filter summary and Escape.
+
+Verification: `mise run check` passes (199 unit cases). `smoke` passes 46 native cases and `smoke-packaged` 10. A fresh-seeded `mise run measure` passes all three cases and every unchanged budget (`dist/measurements/m3-06-seeded-final.json`, 6.9 minutes):
+
+- Warm cover-ready launch takes 798 ms median and evicted 3.12 s. Launches read 9 cover files, down from 32 because larger covers mean fewer cards per screen, and no book files.
+- Full browsing reads exactly 343 live covers, at 597/690 MiB PSS after one and two traversals.
+- Reader opens take 560 ms (PDF) and 634 ms (EPUB) median. Saves are acknowledged in at most 399 ms (PDF) and 825 ms (EPUB).
+- Two readers after search use 590 MiB.
+
+Real-window screenshots of the 500-book template (light and dark, selection, filters, PDF search, narrow EPUB window) were inspected.
+
+Limits: fonts are installed system fonts (P052 comes from the URW base-35 set); another machine falls back to Palatino-like or generic serif. Reading-progress percentages are not shown, because no stored page count exists yet. EPUB dark-mode theming was deliberately not done. Visual QA was one display at scale 1. No commit was created.

@@ -8,6 +8,7 @@ import type {
 } from "../../../shared/runtime";
 import { developmentBooks } from "../../../shared/windows";
 import { BookResults, type Layout, RESULT_BATCH } from "./BookResults";
+import { ContinueReading } from "./ContinueReading";
 import { SectionActions } from "./SectionActions";
 import { SelectionBar } from "./SelectionBar";
 import { Sidebar } from "./Sidebar";
@@ -64,11 +65,16 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const ids = useId();
 
   const view = destination.kind === "trash" ? null : destination;
   const archiveScope = destination.kind === "archive" || includeArchived;
   const narrowed = text.trim() !== "" || author !== "" || subject !== "";
+  const activeFilters =
+    (author ? 1 : 0) +
+    (subject ? 1 : 0) +
+    (includeArchived && destination.kind !== "archive" ? 1 : 0);
 
   // Selection belongs to the view where it was made; results that leave the
   // view (after a removal, say) leave the selection too.
@@ -223,7 +229,7 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
     select({ kind: "section", sectionId: id });
   const count = books?.length ?? 0;
   return (
-    <div className="library">
+    <div className={`library${selected.size > 0 ? " selecting" : ""}`}>
       <Sidebar
         selected={destination}
         sections={sections}
@@ -236,55 +242,72 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
           <h1 id={`${ids}-title`}>{title}</h1>
           {view ? (
             <search className="filters">
-              <label>
-                <span>Search {title}</span>
+              <label className="search-field">
+                <span className="sr-only">Search {title}</span>
                 <input
                   type="search"
                   value={text}
-                  placeholder="Title, author or subject"
+                  placeholder={`Search ${title} by title, author or subject`}
                   onChange={(event) => setText(event.target.value)}
                 />
               </label>
-              <label>
-                <span>Author</span>
-                <select
-                  value={author}
-                  onChange={(event) => setAuthor(event.target.value)}
-                >
-                  <option value="">Any author</option>
-                  {terms.authors.map((term) => (
-                    <option key={term.name} value={term.name}>
-                      {term.name} ({term.count})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Subject</span>
-                <select
-                  value={subject}
-                  onChange={(event) => setSubject(event.target.value)}
-                >
-                  <option value="">Any subject</option>
-                  {terms.subjects.map((term) => (
-                    <option key={term.name} value={term.name}>
-                      {term.name} ({term.count})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {destination.kind === "archive" ? null : (
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={includeArchived}
-                    onChange={(event) =>
-                      setIncludeArchived(event.target.checked)
-                    }
-                  />
-                  <span>Include archived</span>
-                </label>
-              )}
+              <details
+                className="filter-panel"
+                open={filtersOpen}
+                onToggle={(event) => setFiltersOpen(event.currentTarget.open)}
+                onKeyDown={(event) => {
+                  // The open panel floats over the results; Escape folds it.
+                  if (event.key !== "Escape") return;
+                  setFiltersOpen(false);
+                  event.currentTarget.querySelector("summary")?.focus();
+                }}
+              >
+                <summary>
+                  Filters{activeFilters ? ` (${activeFilters} active)` : ""}
+                </summary>
+                <div className="filter-controls">
+                  <label>
+                    <span>Author</span>
+                    <select
+                      value={author}
+                      onChange={(event) => setAuthor(event.target.value)}
+                    >
+                      <option value="">Any author</option>
+                      {terms.authors.map((term) => (
+                        <option key={term.name} value={term.name}>
+                          {term.name} ({term.count})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Subject</span>
+                    <select
+                      value={subject}
+                      onChange={(event) => setSubject(event.target.value)}
+                    >
+                      <option value="">Any subject</option>
+                      {terms.subjects.map((term) => (
+                        <option key={term.name} value={term.name}>
+                          {term.name} ({term.count})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {destination.kind === "archive" ? null : (
+                    <label className="toggle">
+                      <input
+                        type="checkbox"
+                        checked={includeArchived}
+                        onChange={(event) =>
+                          setIncludeArchived(event.target.checked)
+                        }
+                      />
+                      <span>Include archived</span>
+                    </label>
+                  )}
+                </div>
+              </details>
             </search>
           ) : null}
           <fieldset className="layout">
@@ -324,6 +347,12 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
           <p className="notice" role="status">
             {notice}
           </p>
+        ) : null}
+        {books &&
+        destination.kind === "all" &&
+        layout === "grid" &&
+        !narrowed ? (
+          <ContinueReading books={books} onOpen={open} />
         ) : null}
         <p className="result-count" aria-live="polite">
           {books === null

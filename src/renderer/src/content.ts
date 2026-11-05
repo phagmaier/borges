@@ -269,6 +269,8 @@ element("#restore").onclick = () => {
 };
 let observer: ResizeObserver | undefined;
 const catalogMode = new URL(location.href).searchParams.has("catalog");
+// Catalog books hide the diagnostic snapshot tools (they save automatically).
+document.body.dataset.mode = catalogMode ? "catalog" : "diagnostic";
 
 // Catalog books arrive from the parent reader shell, which owns the session
 // and relays positions to the application. This frame never sees session
@@ -366,6 +368,8 @@ async function open() {
   element("#location").textContent = session.label;
   element("#visible-text").textContent = session.visibleText;
   status.textContent = "Ready";
+  // Announced, then kept out of the way of the page.
+  status.dataset.state = "ready";
   if (book) {
     tellParent({ type: "borges:opened", restoration });
     reporting = true;

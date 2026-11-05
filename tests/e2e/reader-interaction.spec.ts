@@ -236,6 +236,23 @@ test("PDF fit, zoom and pan stay within one physical page and snapshot restores 
     .poll(() => surface.evaluate((el) => el.scrollTop))
     .toBeGreaterThan(0);
   await expect(ui.getByTestId("page-text")).toContainText("ORCHID FIRST");
+  // Settled: scrollbars from the zoomed page must not change the fit and
+  // start a redraw loop (each redraw replaces the page box).
+  const redraws = await surface.evaluate(
+    (el) =>
+      new Promise<number>((resolve) => {
+        let count = 0;
+        const observer = new MutationObserver((records) => {
+          count += records.filter((record) => record.target === el).length;
+        });
+        observer.observe(el, { childList: true });
+        setTimeout(() => {
+          observer.disconnect();
+          resolve(count);
+        }, 600);
+      }),
+  );
+  expect(redraws).toBe(0);
 });
 
 test("EPUB keeps a known passage after font/viewport changes and a real process restart", async ({

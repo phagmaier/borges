@@ -1,6 +1,6 @@
 # Borges — version-one specification
 
-Status: discovery complete; development scaffold/toolchain are installed. The minimal shell and embedded SQLite work; fixture rendering, reader interactions, explicit snapshot restoration and diagnostic adversarial isolation are verified. Packaged-runtime SQLite persistence/schema handling is also verified, and the versioned catalog with migrations and the exclusive library-root lock is implemented (M2-01), as are progress storage with session generations (M2-02) staged file publication with startup reconciliation (M2-03), the internal library query/search, section and status/archive service (M2-04), and catalog books in reader windows with centrally coordinated, sender-bound progress saves (M2-05). The A13 catalog measurements are recorded. The library window implements browsing, search/filters, sections/memberships, status/Archive actions and metadata editing (M3-01 to M3-04). Manual cover correction and lazy cover display are verified (M3-05), as are visible startup refusals and unresolved recovery diagnostics (M3-07). A13 has also been remeasured with 400 covers and two catalog readers (M3-08). Extracted covers, import/replacement/Trash and final visual design remain pending. See [development setup](development.md) for the verified subset. Updated 2026-11-04. Borges is the project name.
+Status: discovery complete; development scaffold/toolchain are installed. The minimal shell and embedded SQLite work; fixture rendering, reader interactions, explicit snapshot restoration and diagnostic adversarial isolation are verified. Packaged-runtime SQLite persistence/schema handling is also verified, and the versioned catalog with migrations and the exclusive library-root lock is implemented (M2-01), as are progress storage with session generations (M2-02) staged file publication with startup reconciliation (M2-03), the internal library query/search, section and status/archive service (M2-04), and catalog books in reader windows with centrally coordinated, sender-bound progress saves (M2-05). The A13 catalog measurements are recorded. The library window implements browsing, search/filters, sections/memberships, status/Archive actions and metadata editing (M3-01 to M3-04). Manual cover correction and lazy cover display are verified (M3-05), as are visible startup refusals and unresolved recovery diagnostics (M3-07). A13 has also been remeasured with 400 covers and two catalog readers (M3-08). The user chose the "Reading room" visual direction from the M3-06 prototypes, and it is applied. Extracted covers and import/replacement/Trash remain pending. See [development setup](development.md) for the verified subset. Updated 2026-11-04. Borges is the project name.
 
 The user confirmed the product choices below and delegated remaining routine behavior/storage defaults to the agent. **Agent-selected defaults** identify that delegation. The information layout is provisional; exact appearance is deliberately deferred to later prototypes.
 
@@ -52,7 +52,16 @@ See [ADR 0001](adr/0001-desktop-stack.md), [research](stack-research.md), [archi
 
 ## Organization and presentation
 
-Accepted working layout: sidebar with nested sections, Currently Reading, Finished, and Archive; main cover/title grid with optional compact list. Exact colors, typography, density, and styling belong to later prototypes, not an assumed component-library default.
+Accepted working layout: sidebar with nested sections, Currently Reading, Finished, and Archive; main cover/title grid with optional compact list. The visual direction below was chosen by the user from the M3-06 prototypes; finer polish may continue without another approval round.
+
+**Visual direction (user choice, M3-06, 2026-11-04): "Reading room" for both the library and the reader controls.**
+
+- Library: serif interface type (P052/Palatino family, using installed system fonts, with no downloaded web fonts), warm paper colours that follow the system light/dark preference, and the sidebar on the same paper. The current destination is shown with italic accent text. Section counts are quiet, and small-caps headings divide the sidebar.
+- The main view has a large serif view title and one prominent rounded search field. Author/subject filters and Include archived are folded into a Filters disclosure, whose summary counts the active filters. A Grid/List toggle follows.
+- Grid covers keep their real proportions, bottom-aligned on a shelf line. Missing covers use a dashed placeholder with initials and format. Titles appear in serif type, authors in small caps, status in quiet italics.
+- Selection checkboxes appear over a cover on hover or focus, when checked, and while any book is selected. Selection actions float at the bottom of the view.
+- All Books (grid layout, no search or filters) starts with a Continue reading strip: up to six unarchived Currently Reading books, most recently opened first. The strip is a shortcut; those books still appear in the results. Reading-progress percentages are not shown until a later task records them.
+- Reader: the book fills the window under a quiet small-caps title line that also shows the save state. Controls sit in a faint bottom bar that becomes fully visible on hover or keyboard focus: previous/next, location, Search (`/`), Jump (`:`), Contents, and size/zoom. In-book search opens as a floating panel. Book page colours remain as authored; theming EPUB text for dark mode is not part of this choice.
 
 **Agent-selected defaults:**
 
@@ -61,7 +70,7 @@ Accepted working layout: sidebar with nested sections, Currently Reading, Finish
 - Adding membership never removes other memberships. Removing membership never deletes a book.
 - Deleting a section removes its entire descendant branch and those memberships after confirmation showing affected section/book counts. Preserve book files and surviving memberships. Newly unfiled entries remain in Unfiled. Section-tree undo is not part of book Trash.
 - Parent sections show entries from the section and descendants, once per book. Counts use unique book IDs.
-- Default sorting: title, author, stable ID. Currently Reading sorts by last opened; Archive by last archived. Start with system color preference; detailed styling/themes remain for prototyping.
+- Default sorting: title, author, stable ID. Currently Reading sorts by last opened; Archive by last archived. Start with system color preference; the chosen visual direction is recorded above.
 
 ## Metadata and search
 

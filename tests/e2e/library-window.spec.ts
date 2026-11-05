@@ -37,6 +37,15 @@ async function expectShown(library: Page, titles: string[]) {
     .toEqual(titles);
 }
 
+/** Author/subject filters and Include archived live in the Filters disclosure. */
+async function openFilters(library: Page) {
+  const panel = library.locator("details.filter-panel");
+  if (
+    !(await panel.evaluate((element) => (element as HTMLDetailsElement).open))
+  )
+    await panel.locator("summary").click();
+}
+
 const sidebar = (library: Page) =>
   library.getByRole("navigation", { name: "Library" });
 const destination = (library: Page, name: string) =>
@@ -136,6 +145,7 @@ test("sidebar views, selected-view search, filters and the archive toggle", asyn
   // Botany matches the archived Fixed EPUB only with the toggle on.
   await search.fill("botany");
   await expectShown(library, ["Known PDF"]);
+  await openFilters(library);
   await library.getByLabel("Include archived").check();
   await expectShown(library, ["Fixed EPUB", "Known PDF"]);
   await expect(
@@ -167,6 +177,7 @@ test("sidebar views, selected-view search, filters and the archive toggle", asyn
 
   // Author/subject filters list the view's terms with counts.
   await destination(library, "All Books").click();
+  await openFilters(library);
   const author = library.getByLabel("Author");
   await expect(author.getByRole("option")).toHaveText([
     "Any author",
@@ -199,9 +210,10 @@ test("keyboard opening, list layout, live status updates and a deleted selected 
   ]);
 
   // Keyboard: Tab from the search box through the toolbar to the books.
+  await openFilters(library);
   await library.getByRole("searchbox").focus();
   const order: string[] = [];
-  for (let presses = 0; presses < 9; presses++) {
+  for (let presses = 0; presses < 10; presses++) {
     await library.keyboard.press("Tab");
     order.push(
       await library.evaluate(() => {
@@ -217,6 +229,7 @@ test("keyboard opening, list layout, live status updates and a deleted selected 
     );
   }
   expect(order).toEqual([
+    "Filters",
     "Author",
     "Subject",
     "Include archived",
@@ -253,6 +266,9 @@ test("keyboard opening, list layout, live status updates and a deleted selected 
   await expect(
     library.getByRole("button", { name: "List", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  // The Continue reading strip belongs to the cover grid only.
+  const strip = library.getByRole("region", { name: "Continue reading" });
+  await expect(strip).toHaveCount(0);
   const table = library.getByRole("table", { name: "Books" });
   await expect(table.getByRole("row")).toHaveCount(4); // Header and 3 books.
   await expect(
@@ -264,6 +280,39 @@ test("keyboard opening, list layout, live status updates and a deleted selected 
     .click();
   await second;
   expect(application.windows()).toHaveLength(3);
+
+  // Continue reading: All Books' Currently Reading books, most recently
+  // opened first, while the view is not narrowed; they stay in the results.
+  await library.getByRole("button", { name: "Grid", exact: true }).click();
+  await expect(strip.locator(".continue-title")).toHaveText([
+    "Image-only PDF",
+    "Known PDF",
+  ]);
+  await expect(
+    strip.getByRole("button", { name: "Continue Known PDF", exact: true }),
+  ).toBeVisible();
+  await expectShown(library, [
+    "Image-only PDF",
+    "Known PDF",
+    "Reflowable EPUB",
+  ]);
+  await library.getByRole("searchbox").fill("known");
+  await expectShown(library, ["Known PDF"]);
+  await expect(strip).toHaveCount(0);
+  await library.getByRole("searchbox").fill("");
+  await openFilters(library);
+  await library.getByLabel("Include archived").check();
+  await expect(library.locator(".filter-panel summary")).toHaveText(
+    "Filters (1 active)",
+  );
+  await library.getByLabel("Include archived").uncheck();
+  await expect(library.locator(".filter-panel summary")).toHaveText("Filters");
+  await library.getByLabel("Include archived").press("Escape");
+  await expect(library.getByLabel("Author")).toBeHidden();
+  await expect(library.locator(".filter-panel summary")).toBeFocused();
+  await destination(library, "Currently Reading").click();
+  await expect(strip).toHaveCount(0);
+  await destination(library, "All Books").click();
 
   // Deleting the selected section returns the window to All Books.
   await library.getByRole("button", { name: "Grid", exact: true }).click();

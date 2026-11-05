@@ -1,0 +1,110 @@
+/* Catalog reader window shell ("Reading room", M3-06): a quiet small-caps
+ * title line with the save state above the book content frame. */
+.reader-window {
+  --paper: light-dark(#f6f1e7, #1d1a16);
+  --ink: light-dark(#2a2420, #ebe3d5);
+  --muted: light-dark(#6f6357, #ab9f8e);
+  --line: light-dark(#ddd3c2, #3d362d);
+  --accent: light-dark(#8a3b1e, #e3a47d);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-family: P052, "Palatino Linotype", Palatino, "URW Palladio L", serif;
+  color: var(--ink);
+  background: var(--paper);
+}
+.reader-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 14px;
+  padding: 8px 16px;
+  color: var(--muted);
+  font-variant: small-caps;
+  letter-spacing: 0.08em;
+}
+.reader-title h1 {
+  margin: 0;
+  flex: 0 1 auto;
+  min-width: 5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.95rem;
+  font-weight: normal;
+  color: var(--ink);
+}
+.reader-title p {
+  margin: 0;
+  /* The save message gives way before the title in narrow windows. */
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+.reader-window-actions {
+  margin-left: auto;
+  white-space: nowrap;
+  display: flex;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+.reader-title h1:first-child {
+  margin-left: auto;
+}
+.reader-window-actions button {
+  font: inherit;
+  color: inherit;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.reader-window-actions button:hover,
+.reader-window-actions button:focus-visible {
+  opacity: 1;
+  background: var(--line);
+}
+.reader-window button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.reader-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.reader-messages {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  width: min(560px, calc(100% - 32px));
+  pointer-events: none;
+}
+.reader-messages p {
+  margin: 0;
+  padding: 8px 12px;
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+  pointer-events: auto;
+}
+.reader-window iframe {
+  flex: 1;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
