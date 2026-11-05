@@ -164,8 +164,15 @@
   gap: 12px 20px;
   margin-bottom: 8px;
 }
-.toolbar h1 {
+.title-row {
   flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 20px;
+}
+.toolbar h1 {
   margin: 0 0 4px;
   font-size: 2.3rem;
   font-weight: normal;
@@ -600,4 +607,59 @@
 .library .metadata-dialog input,
 .library .metadata-dialog textarea {
   color: var(--ink);
+}
+
+/* Import (M4-01) */
+.import-buttons {
+  display: flex;
+  gap: 8px;
+}
+.import-panel {
+  border: 1px solid var(--line);
+  border-inline-start: 4px solid var(--accent);
+  background: var(--raise);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+.library .import-panel h2 {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+}
+.import-panel p {
+  margin: 0 0 8px;
+}
+.import-panel .quiet {
+  margin: 0 0 8px;
+}
+.library .import-group summary {
+  cursor: pointer;
+  font-variant: small-caps;
+  text-transform: lowercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.library .import-group.failed summary,
+.library .import-group.unsupported summary {
+  color: var(--accent);
+}
+.import-group ul {
+  margin: 6px 0 10px;
+  padding-inline-start: 20px;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+.import-group li {
+  margin-block: 4px;
+}
+.import-name {
+  font-style: italic;
+}
+.import-message {
+  color: var(--muted);
+}
+.library .import-group li button {
+  margin-inline-start: 8px;
+  padding: 2px 10px;
+  font-size: 0.85rem;
 }

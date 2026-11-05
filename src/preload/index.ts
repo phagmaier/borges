@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import type {
   BorgesApi,
   DevelopmentApi,
+  ImportProgress,
   ProgressResult,
 } from "../shared/runtime";
 
@@ -48,6 +49,15 @@ const borges: BorgesApi = {
     chooseCover: (bookId) => ipcRenderer.invoke("library:choose-cover", bookId),
     cover: (bookId, token) =>
       ipcRenderer.invoke("library:cover", bookId, token),
+    importBooks: (kind, sectionId) =>
+      ipcRenderer.invoke("library:import", kind, sectionId),
+    cancelImport: () => ipcRenderer.invoke("library:cancel-import"),
+    onImportProgress(listener) {
+      const handler = (_: unknown, progress: ImportProgress) =>
+        listener(progress);
+      ipcRenderer.on("library:import-progress", handler);
+      return () => ipcRenderer.off("library:import-progress", handler);
+    },
     openBook: (bookId) => ipcRenderer.invoke("library:open-book", bookId),
     onChanged(listener) {
       const handler = () => listener();

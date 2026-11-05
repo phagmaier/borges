@@ -147,8 +147,9 @@ test.describe("manual cover correction", () => {
 test.describe("lazy cover display", () => {
   test.use({
     catalog: {
+      // Distinct bytes per book: identical content would be skipped.
       books: Array.from({ length: 130 }, (_, i) => ({
-        fixture: "known.pdf",
+        content: `%PDF-1.7\n% created placeholder ${i}\n`,
         name: `Atlas ${String(i).padStart(3, "0")}.pdf`,
       })),
     },

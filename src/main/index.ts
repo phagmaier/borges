@@ -320,6 +320,10 @@ if (!app.requestSingleInstanceLock()) {
         windows,
         readers,
         startupProblems: reconciliation.problems,
+        // Native cancellation tests slow copying in development builds only.
+        importChunkDelayMs: app.isPackaged
+          ? 0
+          : Number(process.env.BORGES_IMPORT_CHUNK_DELAY_MS) || 0,
       });
       ipcMain.handle("reader:open-book", (event) =>
         openAssignedBook(opened, readers, event),

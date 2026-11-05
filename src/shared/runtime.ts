@@ -1,4 +1,5 @@
 import type { MetadataEdit } from "../library/books";
+import type { ImportProgress, ImportSummary } from "../library/import-batch";
 import type { StoredSizing } from "../library/progress";
 import type {
   BookQuery,
@@ -51,6 +52,12 @@ export interface DevelopmentApi {
 }
 
 export type { MetadataEdit } from "../library/books";
+export type {
+  ImportOutcome,
+  ImportOutcomeKind,
+  ImportProgress,
+  ImportSummary,
+} from "../library/import-batch";
 export type {
   BookQuery,
   BookSummary,
@@ -147,6 +154,18 @@ export interface BorgesApi {
       bookId: string,
       token: string,
     ): Promise<LibraryResult<Uint8Array | null>>;
+    /**
+     * Open main's file or folder chooser and import the selection, joining
+     * `sectionId` when given (else Unfiled). Null means the chooser was
+     * cancelled. Resolves when the whole batch has finished or was cancelled.
+     */
+    importBooks(
+      kind: "files" | "folders",
+      sectionId: string | null,
+    ): Promise<LibraryResult<ImportSummary | null>>;
+    /** Cancel the running import; false if none was running. */
+    cancelImport(): Promise<LibraryResult<boolean>>;
+    onImportProgress(listener: (progress: ImportProgress) => void): () => void;
     /** Open or focus the book's reader window. */
     openBook(bookId: string): Promise<LibraryResult<null>>;
     /** Called after any catalog change, including a reader's open. */

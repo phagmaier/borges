@@ -22,7 +22,7 @@ const CHUNK = 256 * 1024;
 export async function copyToNewFile(
   source: FileHandle,
   target: string,
-  afterChunk: () => void = () => {},
+  afterChunk: () => void | Promise<void> = () => {},
   maxBytes: number = Number.POSITIVE_INFINITY,
 ): Promise<FileDigest> {
   const hash = createHash("sha256");
@@ -43,7 +43,7 @@ export async function copyToNewFile(
       await writeAll(output, chunk);
       hash.update(chunk);
       size += bytesRead;
-      afterChunk();
+      await afterChunk();
     }
     await output.sync();
   } finally {
@@ -76,6 +76,36 @@ export async function digestFile(path: string): Promise<FileDigest> {
     return { sha256: hash.digest("hex"), size };
   } finally {
     await handle.close();
+  }
+}
+
+/** Whether two regular files hold the same bytes (final symlinks refused). */
+export async function sameContents(a: string, b: string): Promise<boolean> {
+  const flags = constants.O_RDONLY | constants.O_NOFOLLOW;
+  const left = await open(a, flags);
+  try {
+    const right = await open(b, flags);
+    try {
+      const [l, r] = await Promise.all([left.stat(), right.stat()]);
+      if (l.size !== r.size) return false;
+      const one = Buffer.allocUnsafe(CHUNK);
+      const two = Buffer.allocUnsafe(CHUNK);
+      for (let position = 0; ; ) {
+        const [x, y] = await Promise.all([
+          left.read(one, 0, CHUNK, position),
+          right.read(two, 0, CHUNK, position),
+        ]);
+        if (x.bytesRead !== y.bytesRead) return false;
+        if (x.bytesRead === 0) return true;
+        if (!one.subarray(0, x.bytesRead).equals(two.subarray(0, y.bytesRead)))
+          return false;
+        position += x.bytesRead;
+      }
+    } finally {
+      await right.close();
+    }
+  } finally {
+    await left.close();
   }
 }
 

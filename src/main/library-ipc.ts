@@ -13,6 +13,7 @@ import {
   unarchiveBook,
 } from "../library/books.ts";
 import { readCover, setManualCover } from "../library/covers.ts";
+import { countOutcomes, importBatch } from "../library/import-batch.ts";
 import {
   getBook,
   listFilterTerms,
@@ -36,8 +37,12 @@ import type { WindowCoordinator } from "./windows.ts";
 
 /** Channel sent to the library window after any catalog change. */
 export const LIBRARY_CHANGED = "library:changed";
+/** Progress of the running import batch, sent to the library window. */
+export const IMPORT_PROGRESS = "library:import-progress";
 
 interface Dependencies {
+  /** Development-only delay after each copied import chunk, in ms. */
+  importChunkDelayMs?: number;
   ipcMain: IpcMain;
   database: DatabaseSync;
   root: string;
@@ -58,6 +63,7 @@ export function registerLibraryIpc({
   windows,
   readers,
   startupProblems,
+  importChunkDelayMs = 0,
 }: Dependencies): { changed(): void } {
   const changed = () => {
     const library = windows.library();
@@ -129,6 +135,103 @@ export function registerLibraryIpc({
     } finally {
       choosingCover = false;
     }
+  });
+
+  // One import batch at a time, tied to the library page that started it:
+  // closing or reloading that page cancels the batch (completed books stay).
+  let importing: AbortController | null = null;
+  handle("import", async (kind, sectionId) => {
+    if (kind !== "files" && kind !== "folders")
+      throw new LibraryError("invalid", "Choose files or folders to import.");
+    if (importing)
+      throw new LibraryError("invalid", "An import is already running.");
+    // importBatch validates the section again after the dialog.
+    if (
+      sectionId != null &&
+      (typeof sectionId !== "string" ||
+        !database.prepare("SELECT 1 FROM sections WHERE id = ?").get(sectionId))
+    )
+      throw new LibraryError(
+        "unknown-section",
+        "The section to import into no longer exists.",
+      );
+    const contents = windows.library();
+    const parent = contents && BrowserWindow.fromWebContents(contents);
+    if (!contents || !parent) throw new Error("The library window is closed.");
+    const controller = new AbortController();
+    importing = controller;
+    const stop = () => controller.abort();
+    const onNavigation = (details: {
+      isMainFrame: boolean;
+      isSameDocument: boolean;
+    }) => {
+      if (details.isMainFrame && !details.isSameDocument) stop();
+    };
+    contents.once("destroyed", stop);
+    contents.on("did-start-navigation", onNavigation);
+    try {
+      const choice = await dialog.showOpenDialog(parent, {
+        title:
+          kind === "files"
+            ? "Import PDF and EPUB files"
+            : "Import folders of PDF and EPUB files",
+        properties:
+          kind === "files"
+            ? ["openFile", "multiSelections"]
+            : ["openDirectory", "multiSelections"],
+        ...(kind === "files"
+          ? {
+              filters: [
+                {
+                  name: "Books (PDF, EPUB)",
+                  extensions: ["pdf", "epub", "PDF", "EPUB"],
+                },
+                { name: "All files", extensions: ["*"] },
+              ],
+            }
+          : {}),
+      });
+      // A page closed or reloaded while choosing has nobody to report to.
+      if (
+        choice.canceled ||
+        choice.filePaths.length === 0 ||
+        controller.signal.aborted
+      )
+        return null;
+      const summary = await importBatch({ root, database }, choice.filePaths, {
+        sectionId: (sectionId as string | null | undefined) ?? null,
+        signal: controller.signal,
+        onProgress(progress) {
+          if (!contents.isDestroyed()) contents.send(IMPORT_PROGRESS, progress);
+        },
+        onImported: changed,
+        ...(importChunkDelayMs > 0
+          ? {
+              pace: () =>
+                new Promise<void>((resolve) =>
+                  setTimeout(resolve, importChunkDelayMs),
+                ),
+            }
+          : {}),
+      });
+      const counts = countOutcomes(summary);
+      console.info(
+        `Import finished: ${Object.entries(counts)
+          .map(([kind, count]) => `${count} ${kind}`)
+          .join(", ")}.`,
+      );
+      return summary;
+    } finally {
+      importing = null;
+      if (!contents.isDestroyed()) {
+        contents.off("destroyed", stop);
+        contents.off("did-start-navigation", onNavigation);
+      }
+    }
+  });
+  handle("cancel-import", () => {
+    importing?.abort();
+    return importing !== null;
   });
 
   handle("books", (query) =>

@@ -9,6 +9,7 @@ import type {
 import { developmentBooks } from "../../../shared/windows";
 import { BookResults, type Layout, RESULT_BATCH } from "./BookResults";
 import { ContinueReading } from "./ContinueReading";
+import { ImportButtons, ImportStatus, useImport } from "./ImportControls";
 import { SectionActions } from "./SectionActions";
 import { SelectionBar } from "./SelectionBar";
 import { Sidebar } from "./Sidebar";
@@ -67,6 +68,7 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const ids = useId();
+  const imports = useImport(setError);
 
   const view = destination.kind === "trash" ? null : destination;
   const archiveScope = destination.kind === "archive" || includeArchived;
@@ -227,6 +229,17 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
       : undefined;
   const showSection = (id: string) =>
     select({ kind: "section", sectionId: id });
+  const importTarget = currentSection
+    ? { id: currentSection.id, name: currentSection.name }
+    : null;
+  /** Show a skipped import's existing entry where it is visible. */
+  function showExisting(existing: { title: string; archived: boolean }) {
+    select(existing.archived ? { kind: "archive" } : { kind: "all" });
+    setText(existing.title);
+    setAuthor("");
+    setSubject("");
+    setIncludeArchived(false);
+  }
   const count = books?.length ?? 0;
   return (
     <div className={`library${selected.size > 0 ? " selecting" : ""}`}>
@@ -239,7 +252,22 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
       <main className="library-main" aria-labelledby={`${ids}-title`}>
         <StartupProblems root={runtime?.catalog.root} />
         <header className="toolbar">
-          <h1 id={`${ids}-title`}>{title}</h1>
+          <div className="title-row">
+            <h1 id={`${ids}-title`}>{title}</h1>
+            {view ? (
+              <ImportButtons
+                busy={
+                  imports.state.phase === "choosing" ||
+                  imports.state.phase === "running"
+                }
+                target={importTarget}
+                onStart={(kind) => {
+                  setError(null);
+                  imports.start(kind, importTarget);
+                }}
+              />
+            ) : null}
+          </div>
           {view ? (
             <search className="filters">
               <label className="search-field">
@@ -324,6 +352,12 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
             ))}
           </fieldset>
         </header>
+        <ImportStatus
+          state={imports.state}
+          onCancel={imports.cancel}
+          onDismiss={imports.dismiss}
+          onShow={showExisting}
+        />
         {currentSection && sections ? (
           <SectionActions
             section={currentSection}
@@ -388,7 +422,8 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
             <p>{emptyViewMessage(destination)}</p>
             {destination.kind === "all" ? (
               <p className="quiet">
-                Importing PDF and EPUB files arrives in a later build.
+                Use Import files… or Import folder… to copy PDF and EPUB books
+                into the library. The original files are left unchanged.
               </p>
             ) : null}
           </div>

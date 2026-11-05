@@ -1,8 +1,18 @@
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import { type FileHandle, open } from "node:fs/promises";
 import { basename } from "node:path";
-import { copyToNewFile, publishFile } from "../storage/files.ts";
-import { resolveLibraryPath } from "../storage/paths.ts";
+import type { DatabaseSync } from "node:sqlite";
+import {
+  copyToNewFile,
+  type FileDigest,
+  publishFile,
+  sameContents,
+} from "../storage/files.ts";
+import {
+  resolveExistingLibraryPath,
+  resolveLibraryPath,
+} from "../storage/paths.ts";
 import { immediate } from "../storage/transaction.ts";
 import {
   type BookFormat,
@@ -17,23 +27,39 @@ import {
   setOperationState,
 } from "./recovery.ts";
 
-// Minimal internal "add file as new book" on top of the operation protocol
-// (see recovery.ts for the states). Duplicate handling, metadata/cover
-// extraction, sections and batch import belong to the milestone-four import
-// service; this is the publication path they will share.
+// "Add file as new book" on top of the operation protocol (see recovery.ts
+// for the states). Byte-identical live content is skipped, the book can join
+// a section in the same commit, and an abort signal cancels before the
+// commit. Batch import (import-batch.ts) runs files through this one at a
+// time; metadata/cover extraction and parse checks arrive with M4-02.
 
 export type ImportErrorCode =
   | "unsupported"
   | "mismatched"
   | "unreadable"
+  | "duplicate"
+  | "cancelled"
   | "storage-failed";
+
+/** The live entry that already holds byte-identical content. */
+export interface ExistingBook {
+  bookId: string;
+  title: string;
+  archived: boolean;
+}
 
 export class ImportError extends Error {
   readonly code: ImportErrorCode;
-  constructor(code: ImportErrorCode, message: string, options?: ErrorOptions) {
+  readonly existing: ExistingBook | undefined;
+  constructor(
+    code: ImportErrorCode,
+    message: string,
+    options?: ErrorOptions & { existing?: ExistingBook },
+  ) {
     super(message, options);
     this.name = "ImportError";
     this.code = code;
+    this.existing = options?.existing;
   }
 }
 
@@ -51,6 +77,14 @@ export interface AddBookOptions {
   now?: () => number;
   /** Called at each protocol point; throwing simulates a failure there. */
   checkpoint?: (step: ImportStep) => void;
+  /** Join this section in the catalog commit. If it was deleted meanwhile,
+   * the book is still added (unfiled) and `joinedSection` is false. */
+  sectionId?: string | null;
+  /** Aborting before the catalog commit rolls the copy back ("cancelled"). */
+  signal?: AbortSignal;
+  /** Awaited after each copied chunk (development-only throttling for
+   * native cancellation tests). */
+  pace?: () => Promise<void>;
 }
 
 export interface AddedBook {
@@ -63,6 +97,8 @@ export interface AddedBook {
   path: string;
   sha256: string;
   size: number;
+  /** Whether the requested section was joined (false when none requested). */
+  joinedSection: boolean;
 }
 
 /**
@@ -77,9 +113,17 @@ export async function addFileAsNewBook(
   options: AddBookOptions = {},
 ): Promise<AddedBook> {
   const now = options.now ?? Date.now;
-  const checkpoint = options.checkpoint ?? (() => {});
-  const { root, database } = library;
   const sourceName = basename(sourcePath);
+  const { signal } = options;
+  const checkpoint = (step: ImportStep) => {
+    options.checkpoint?.(step);
+    if (signal?.aborted && step !== "committed")
+      throw new ImportError(
+        "cancelled",
+        `Import of ${sourceName} was cancelled; no book was created.`,
+      );
+  };
+  const { root, database } = library;
   const claimed = formatFromName(sourceName);
   if (!claimed) {
     throw new ImportError(
@@ -87,6 +131,11 @@ export async function addFileAsNewBook(
       `${sourceName} is not a PDF or EPUB file (expected a .pdf or .epub name).`,
     );
   }
+  if (signal?.aborted)
+    throw new ImportError(
+      "cancelled",
+      `Import of ${sourceName} was cancelled before it started.`,
+    );
   const source = await openSource(sourcePath, sourceName);
 
   const operationId = randomUUID();
@@ -127,7 +176,10 @@ export async function addFileAsNewBook(
       digest = await copyToNewFile(
         source,
         resolveLibraryPath(root, stagedPath),
-        () => checkpoint("copying"),
+        async () => {
+          checkpoint("copying");
+          await options.pace?.(); // A cancel here is seen at the next point.
+        },
       );
     } finally {
       await source.close();
@@ -150,6 +202,12 @@ export async function addFileAsNewBook(
         now(),
       ),
     );
+    const existing = await identicalLiveBook(
+      library,
+      digest,
+      resolveLibraryPath(root, stagedPath),
+    );
+    if (existing) throw duplicateOf(sourceName, existing);
     checkpoint("staged");
     await publishFile(
       resolveLibraryPath(root, stagedPath),
@@ -160,8 +218,13 @@ export async function addFileAsNewBook(
       setOperationState(database, operationId, "published", {}, now()),
     );
     checkpoint("published");
+    let joinedSection = false;
     immediate(database, () => {
       const at = now();
+      // Recheck against the committed catalog: content that became live
+      // since the comparison above is still a duplicate.
+      const existing = liveBooksWithDigest(database, digest)[0];
+      if (existing) throw duplicateOf(sourceName, existing);
       database
         .prepare(
           "INSERT INTO books (id, current_revision_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -183,6 +246,15 @@ export async function addFileAsNewBook(
           sourceName,
           at,
         );
+      if (options.sectionId) {
+        joinedSection =
+          database
+            .prepare(
+              `INSERT INTO section_memberships (section_id, book_id, added_at)
+               SELECT id, ?, ? FROM sections WHERE id = ?`,
+            )
+            .run(bookId, at, options.sectionId).changes === 1;
+      }
       setOperationState(database, operationId, "committed", {}, at);
       checkpoint("committing");
     });
@@ -196,6 +268,7 @@ export async function addFileAsNewBook(
       title,
       path: publishedPath,
       ...digest,
+      joinedSection,
     };
   } catch (error) {
     if (committed) throw error;
@@ -206,10 +279,73 @@ export async function addFileAsNewBook(
   }
 }
 
+interface LiveCandidate extends ExistingBook {
+  path: string;
+}
+
+/** Live books (archived included) whose current revision has this digest. */
+function liveBooksWithDigest(
+  database: DatabaseSync,
+  digest: FileDigest,
+): LiveCandidate[] {
+  return database
+    .prepare(
+      `SELECT b.id, b.title, b.archived_at, r.path FROM revisions r
+       JOIN books b ON b.current_revision_id = r.id
+       WHERE r.sha256 = ? AND r.size = ? AND b.deleted_at IS NULL
+       ORDER BY b.created_at, b.id`,
+    )
+    .all(digest.sha256, digest.size)
+    .map((row) => ({
+      bookId: String(row.id),
+      title: String(row.title),
+      archived: row.archived_at !== null,
+      path: String(row.path),
+    }));
+}
+
+/**
+ * The live book whose bytes equal the staged copy. The hash selects
+ * candidates; readable candidates are compared byte for byte. A candidate
+ * whose managed file cannot be read is trusted on its SHA-256 alone.
+ */
+async function identicalLiveBook(
+  library: LibraryHandle,
+  digest: FileDigest,
+  staged: string,
+): Promise<ExistingBook | null> {
+  for (const candidate of liveBooksWithDigest(library.database, digest)) {
+    let same = true;
+    try {
+      same = await sameContents(
+        staged,
+        await resolveExistingLibraryPath(library.root, candidate.path),
+      );
+    } catch {
+      // Missing/unreadable managed file: the matching hash decides.
+    }
+    if (same) return candidate;
+  }
+  return null;
+}
+
+function duplicateOf(
+  sourceName: string,
+  { bookId, title, archived }: ExistingBook,
+): ImportError {
+  // Only these fields leave main; the managed path stays private.
+  return new ImportError(
+    "duplicate",
+    `${sourceName} is already in the library as “${title}”${archived ? " (archived)" : ""}; it was skipped.`,
+    { existing: { bookId, title, archived } },
+  );
+}
+
 async function openSource(path: string, name: string): Promise<FileHandle> {
   let handle: FileHandle | undefined;
   try {
-    handle = await open(path, "r");
+    // Non-blocking, so a FIFO or device cannot stall the import.
+    handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
     if (!(await handle.stat()).isFile()) throw new Error("not a regular file");
     return handle;
   } catch (error) {

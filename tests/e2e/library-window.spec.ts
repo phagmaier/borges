@@ -377,7 +377,8 @@ test.describe("a library larger than one batch", () => {
   test.use({
     catalog: {
       books: Array.from({ length: 130 }, (_, i) => ({
-        content: "%PDF-1.7\n% created placeholder\n",
+        // Distinct bytes per book: identical content would be skipped.
+        content: `%PDF-1.7\n% created placeholder ${i}\n`,
         name: `Volume ${i + 1}.pdf`,
       })),
     },
