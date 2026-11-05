@@ -33,6 +33,7 @@ export class PdfSession extends EventTarget implements ReaderSession {
   private surface?: HTMLElement;
   private page = 1;
   private textLayer?: TextLayer;
+  private selectedHit?: SearchHit;
   private rendering = Promise.resolve();
   private disposed = false;
   get label() {
@@ -151,6 +152,7 @@ export class PdfSession extends EventTarget implements ReaderSession {
         box.append(link);
       }
       restorePan(surface, pan);
+      this.highlightCurrentHit();
       this.dispatchEvent(new Event("relocate"));
     });
     // A failed page must not permanently poison the draw queue.
@@ -228,19 +230,27 @@ export class PdfSession extends EventTarget implements ReaderSession {
   }
   async showHit(hit: SearchHit) {
     await this.restore(hit.location);
+    this.selectedHit = hit;
+    this.highlightCurrentHit(true);
+  }
+  private highlightCurrentHit(scroll = false) {
+    const hit = this.selectedHit;
+    if (!hit) return;
     const layer = this.surface?.querySelector(".textLayer");
     const match = layer
       ? [...textMatches(document, layer, hit.query)][hit.occurrence ?? 0]
       : undefined;
     if (match) {
       CSS.highlights.set("reader-search", new Highlight(match.range));
-      match.range.startContainer.parentElement?.scrollIntoView({
-        block: "nearest",
-        inline: "nearest",
-      });
+      if (scroll)
+        match.range.startContainer.parentElement?.scrollIntoView({
+          block: "nearest",
+          inline: "nearest",
+        });
     }
   }
   clearSearch() {
+    this.selectedHit = undefined;
     CSS.highlights.delete("reader-search");
   }
   async dispose() {

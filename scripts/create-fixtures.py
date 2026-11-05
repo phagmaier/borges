@@ -113,6 +113,14 @@ for name, fixed, obfuscated in [('reflowable.epub', False, False), ('fixed.epub'
             put('META-INF/encryption.xml', '<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"><EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/><CipherData><CipherReference URI="font.ttf"/></CipherData></EncryptedData></encryption>')
 (OUT / 'LICENSE_LIBERATION').write_bytes((font_path.parent / 'LICENSE_LIBERATION').read_bytes())
 
+# Ordinary publisher focus targets, without scripts or host privileges.
+with ZipFile(OUT / 'reflowable.epub') as original, ZipFile(OUT / 'reader-controls.epub', 'w', compression=ZIP_STORED) as controls:
+    for item in original.infolist():
+        data = original.read(item.filename)
+        if item.filename == 'one.xhtml':
+            data = data.replace(b'<body>', b'<body><ul tabindex="0" aria-label="Chapter index"><li>Reader list focus</li></ul><div role="dialog" tabindex="0" aria-label="Publisher dialog"><p>Publisher dialog focus</p></div>')
+        controls.writestr(item, data)
+
 # Adversarial content is created here, never downloaded. Tests substitute this
 # for the allowlisted EPUB; it is not an arbitrary-file entry point in the UI.
 with ZipFile(OUT / 'obfuscated.epub') as original, ZipFile(OUT / 'malicious.epub', 'w', compression=ZIP_STORED) as adversarial:

@@ -64,15 +64,18 @@ function closeSearch() {
   surface.focus();
 }
 function showSearch() {
+  const reopening = panel.hidden;
   panel.hidden = false;
   query.focus();
+  if (reopening) void searchBook();
 }
 function handleKey(event: KeyboardEvent) {
   const target = event.target as Element | null;
   if (
     target?.closest(
-      "input,textarea,select,button,a,[contenteditable],dialog",
+      'input,textarea,select,button,a,[contenteditable],dialog,[role="dialog"],ul,ol,menu,[role="list"],[role="listbox"]',
     ) ||
+    event.defaultPrevented ||
     event.altKey ||
     event.ctrlKey ||
     event.metaKey
@@ -212,6 +215,9 @@ const contents = element<HTMLSelectElement>("#contents");
 contents.onchange = () => {
   if (!contents.value) return;
   const target = session.contents[Number(contents.value)]?.target;
+  // This is a navigation action; allow choosing the same destination again
+  // after a page turn, jump or search moved elsewhere.
+  contents.value = "";
   if (target)
     void run(async () => {
       await session.restore(target);
