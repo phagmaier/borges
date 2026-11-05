@@ -21,6 +21,7 @@ import type {
 import type { InspectBook } from "../library/extraction.ts";
 import { replaceBookFile } from "../library/import.ts";
 import { countOutcomes, importBatch } from "../library/import-batch.ts";
+import { emptyTrash } from "../library/purge.ts";
 import {
   getBook,
   listFilterTerms,
@@ -138,6 +139,11 @@ export function registerLibraryIpc({
   );
   let choosingCover = false;
   handle("choose-cover", async (bookId) => {
+    if (trashBusy)
+      throw new LibraryError(
+        "invalid",
+        "A Trash action is running. Try again when it finishes.",
+      );
     const book = getBook(database, bookId as string);
     if (choosingCover)
       throw new LibraryError("invalid", "A cover chooser is already open.");
@@ -218,6 +224,38 @@ export function registerLibraryIpc({
   let replacing = false;
   let trashBusy = false;
   handle("trash", () => listTrash({ root, database }));
+  handle("empty-trash", async (entryIds, bytes) => {
+    if (trashBusy || importing || replacing || choosingCover)
+      throw new LibraryError(
+        "invalid",
+        "Another import, cover, replacement or Trash action is running.",
+      );
+    if (
+      !Array.isArray(entryIds) ||
+      entryIds.some((id) => typeof id !== "string") ||
+      typeof bytes !== "number"
+    )
+      throw new LibraryError(
+        "invalid",
+        "Review Trash before confirming Empty Trash.",
+      );
+    trashBusy = true;
+    try {
+      const listing = await listTrash({ root, database });
+      if (listing.bytes !== bytes)
+        throw new LibraryError(
+          "invalid",
+          "Trash storage changed. Review the updated count and storage before emptying it.",
+        );
+      return await emptyTrash(
+        { root, database },
+        { expectedEntryIds: entryIds },
+      );
+    } finally {
+      trashBusy = false;
+      changed();
+    }
+  });
   handle(
     "delete-book",
     async (bookId) => {

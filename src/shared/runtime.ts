@@ -10,6 +10,7 @@ export type {
   TrashMatchPrompt,
 } from "../library/trash-matches";
 
+import type { PurgeResult } from "../library/purge";
 import type { RestoredBook, TrashListing } from "../library/trash";
 
 export type { RestoredBook, TrashEntry, TrashListing } from "../library/trash";
@@ -136,6 +137,10 @@ export interface BorgesApi {
       listener: (prompt: TrashMatchPrompt & { token: string }) => void,
     ): () => void;
     trash(): Promise<LibraryResult<TrashListing>>;
+    emptyTrash(
+      entryIds: string[],
+      bytes: number,
+    ): Promise<LibraryResult<PurgeResult>>;
     deleteBook(bookId: string): Promise<LibraryResult<{ id: string }>>;
     restoreDeletedBook(entryId: string): Promise<LibraryResult<RestoredBook>>;
     startupProblems(): Promise<LibraryResult<string[]>>;

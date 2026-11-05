@@ -4,6 +4,7 @@ import { open } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
 import { resolveExistingLibraryPath } from "../storage/paths.ts";
 import { immediate } from "../storage/transaction.ts";
+import { assertNotPurging } from "./purge.ts";
 import { getBook } from "./query.ts";
 import type { LibraryHandle } from "./recovery.ts";
 import { LibraryError, requireId, storage } from "./rules.ts";
@@ -24,6 +25,8 @@ export interface TrashEntry {
   position: string;
   bytes: number;
   fileProblem: boolean;
+  purgeProblem: string | null;
+  purging: boolean;
 }
 export interface TrashListing {
   entries: TrashEntry[];
@@ -67,6 +70,7 @@ export function deleteBook(
     () =>
       immediate(database, () => {
         getBook(database, bookId);
+        assertNotPurging(database, bookId);
         const sections = database
           .prepare(`SELECT s.id, s.name FROM sections s
       JOIN section_memberships m ON m.section_id = s.id WHERE m.book_id = ? ORDER BY s.id`)
@@ -115,7 +119,7 @@ export async function listTrash(library: LibraryHandle): Promise<TrashListing> {
   const rows = storage(
     () =>
       library.database
-        .prepare(`SELECT t.id, t.kind, t.book_id, t.trashed_at,
+        .prepare(`SELECT t.id, t.kind, t.book_id, t.trashed_at, t.context,
       b.title, b.reading_status, b.archived_at, b.cover_path, b.deleted_at, b.current_revision_id,
       r.id AS revision_id, r.format, r.path, r.original_filename, r.extracted_title, r.extracted_cover_path,
       p.pdf_page, p.epub_section, p.epub_fraction
@@ -139,6 +143,18 @@ export async function listTrash(library: LibraryHandle): Promise<TrashListing> {
       row.kind === "book" ? row.cover_path : null,
     ])
       if (cover) await size(String(cover));
+    if (row.kind === "book")
+      for (const cover of library.database
+        .prepare(
+          "SELECT published_path FROM recovery_operations WHERE kind = 'cover' AND state = 'committed' AND book_id = ? AND json_extract(detail, '$.purgedBy') IS NULL",
+        )
+        .all(String(row.book_id)))
+        if (cover.published_path) await size(String(cover.published_path));
+    const pendingPurge = library.database
+      .prepare(
+        "SELECT detail FROM recovery_operations WHERE kind = 'purge' AND book_id = ? AND state NOT IN ('committed', 'abandoned') LIMIT 1",
+      )
+      .get(String(row.book_id));
     entries.push({
       id: String(row.id),
       kind: row.kind as TrashEntry["kind"],
@@ -158,6 +174,13 @@ export async function listTrash(library: LibraryHandle): Promise<TrashListing> {
       trashedAt: Number(row.trashed_at),
       bytes: bytes ?? 0,
       fileProblem: bytes === null,
+      purging: Boolean(pendingPurge),
+      purgeProblem: pendingPurge
+        ? String(
+            JSON.parse(String(pendingPurge.detail)).reason ??
+              "A confirmed purge is unfinished. Retry Empty Trash; restoration is unavailable.",
+          )
+        : (JSON.parse(String(row.context)).purgeProblem ?? null),
       position:
         row.pdf_page !== null
           ? `Page ${row.pdf_page}`
@@ -194,6 +217,7 @@ export async function restoreDeletedBook(
       "invalid",
       "This deleted-book entry is no longer in Trash.",
     );
+  assertNotPurging(database, String(preview.book_id));
   const fileProblem =
     (await readableSize(library, String(preview.path))) === null;
   const result = storage(
@@ -204,6 +228,7 @@ export async function restoreDeletedBook(
             "invalid",
             "Restoration was cancelled; nothing was restored.",
           );
+        assertNotPurging(database, String(preview.book_id));
         const row = find();
         if (!row || row.revision_id !== preview.revision_id)
           throw new LibraryError(

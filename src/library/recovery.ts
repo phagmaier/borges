@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { digestFile, entryKind, removeFile } from "../storage/files.ts";
 import { resolveLibraryPath } from "../storage/paths.ts";
 import { immediate } from "../storage/transaction.ts";
+import { resumePurge } from "./purge.ts";
 
 // Startup reconciliation for the file/catalog operation protocol. SQLite
 // commits do not cover filesystem changes, so every import is recorded before
@@ -62,7 +63,7 @@ export interface ReconciledOperation {
   operationId: string;
   kind: string;
   previousState: OperationState;
-  outcome: "rolled-back" | "retained";
+  outcome: "rolled-back" | "retained" | "purged";
   /** Root-relative paths removed by this reconciliation. */
   removed: string[];
   /** Root-relative paths deliberately left in place. */
@@ -141,14 +142,16 @@ export async function reconcileOperations(
   const operations: ReconciledOperation[] = [];
   for (const record of open) {
     operations.push(
-      record.state === "failed"
-        ? retainedAgain(record)
-        : await rollBackOperation(
-            library,
-            record,
-            "interrupted before its catalog commit",
-            now,
-          ),
+      record.kind === "purge" && record.state === "pending"
+        ? await resumePurge(library, record.id)
+        : record.state === "failed"
+          ? retainedAgain(record)
+          : await rollBackOperation(
+              library,
+              record,
+              "interrupted before its catalog commit",
+              now,
+            ),
     );
   }
   return { operations, unrecognized: await unrecognizedEntries(library) };

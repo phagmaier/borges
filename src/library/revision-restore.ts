@@ -4,6 +4,7 @@ import { digestFile } from "../storage/files.ts";
 import { resolveExistingLibraryPath } from "../storage/paths.ts";
 import { immediate } from "../storage/transaction.ts";
 import { type AddBookOptions, addFileAsNewBook } from "./import.ts";
+import { assertNotPurging } from "./purge.ts";
 import { getBook } from "./query.ts";
 import type { LibraryHandle } from "./recovery.ts";
 import { checkReplacementTarget, commitReplacement } from "./replacement.ts";
@@ -43,6 +44,7 @@ export async function restoreRevision(
   const preview = find();
   if (!preview)
     throw new LibraryError("invalid", "This entry is no longer in Trash.");
+  assertNotPurging(database, String(preview.book_id));
   const conflict = () => {
     const row = database
       .prepare(`SELECT b.id, b.title FROM books b JOIN revisions r ON r.id = b.current_revision_id
@@ -65,6 +67,7 @@ export async function restoreRevision(
       options.expectedCurrentId ?? String(preview.current_revision_id),
   };
   const check = () => {
+    assertNotPurging(database, String(preview.book_id));
     if (options.signal?.aborted)
       throw new LibraryError(
         "invalid",

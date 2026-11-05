@@ -1,4 +1,5 @@
 // Real child process for lock and crash tests; run directly by Node.
+
 import { mkdirSync, readFileSync } from "node:fs";
 import { setManualCover } from "../../src/library/covers.ts";
 import {
@@ -11,6 +12,7 @@ import {
   beginReaderSession,
   saveProgress,
 } from "../../src/library/progress.ts";
+import { emptyTrash } from "../../src/library/purge.ts";
 import { restoreRevision } from "../../src/library/revision-restore.ts";
 import { deleteBook, restoreDeletedBook } from "../../src/library/trash.ts";
 import { openLibrary } from "../../src/storage/catalog.ts";
@@ -67,6 +69,17 @@ if (mode === "hold-lock") {
     console.log(`acked ${ack.sequence}`);
   }
   block();
+} else if (mode === "purge-and-stop") {
+  const [step] = extra;
+  await emptyTrash(openLibrary({ root }), {
+    checkpoint(reached) {
+      if (reached === step) {
+        console.log(`at ${step}`);
+        block();
+      }
+    },
+  });
+  throw new Error(`never reached ${step}`);
 } else if (mode === "revision-and-stop") {
   const [entryId, restoreMode, step] = extra as [string, string, string];
   const library = openLibrary({ root });

@@ -36,6 +36,8 @@ const borges: BorgesApi = {
       return () => ipcRenderer.off("library:import-trash-match", handler);
     },
     trash: () => ipcRenderer.invoke("library:trash"),
+    emptyTrash: (entryIds, bytes) =>
+      ipcRenderer.invoke("library:empty-trash", entryIds, bytes),
     deleteBook: (bookId) => ipcRenderer.invoke("library:delete-book", bookId),
     restoreDeletedBook: (entryId) =>
       ipcRenderer.invoke("library:restore-deleted-book", entryId),

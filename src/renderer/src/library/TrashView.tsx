@@ -18,6 +18,7 @@ export function TrashView() {
     entry: TrashEntry;
     mode: "current" | "separate";
   } | null>(null);
+  const [purgeChoice, setPurgeChoice] = useState<TrashListing | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(
     () => window.borges.library.onChanged(() => setRevision((n) => n + 1)),
@@ -60,6 +61,37 @@ export function TrashView() {
       setBusy(false);
     }
   }
+  async function purge() {
+    if (!purgeChoice) return;
+    const snapshot = purgeChoice;
+    setPurgeChoice(null);
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await window.borges.library.emptyTrash(
+        snapshot.entries.map((e) => e.id),
+        snapshot.bytes,
+      );
+      if (!result.ok) setError(result.message);
+      else {
+        setNotice(
+          `Permanently removed ${result.value.purged} Trash ${result.value.purged === 1 ? "entry" : "entries"}.`,
+        );
+        if (result.value.failures.length)
+          setError(
+            result.value.failures
+              .map((f) => `${f.title}: ${f.message}`)
+              .join(" "),
+          );
+      }
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+      setRevision((n) => n + 1);
+    }
+  }
   async function restoreFile() {
     if (!revisionChoice) return;
     const { entry, mode } = revisionChoice;
@@ -90,6 +122,13 @@ export function TrashView() {
         Deleted books and earlier files stay here until you choose to empty
         Trash.
       </p>
+      {purgeChoice ? (
+        <EmptyTrashDialog
+          listing={purgeChoice}
+          onClose={() => setPurgeChoice(null)}
+          onConfirm={() => void purge()}
+        />
+      ) : null}
       {revisionChoice ? (
         <RevisionRestoreDialog
           entry={revisionChoice.entry}
@@ -107,6 +146,13 @@ export function TrashView() {
             {listing.entries.length === 1 ? "entry" : "entries"} ·{" "}
             {storageSize(listing.bytes)} in retained files and covers
           </p>
+          <button
+            type="button"
+            disabled={busy || listing.entries.length === 0}
+            onClick={() => setPurgeChoice(listing)}
+          >
+            {busy ? "Working…" : "Empty Trash…"}
+          </button>
           {listing.unavailableFiles ? (
             <p role="alert">
               {listing.unavailableFiles} missing or unreadable files are
@@ -150,11 +196,14 @@ export function TrashView() {
                           {entry.position} · Trashed{" "}
                           {new Date(entry.trashedAt).toLocaleDateString()}
                         </p>
+                        {entry.purgeProblem ? (
+                          <p role="alert">{entry.purgeProblem}</p>
+                        ) : null}
                       </div>
                       {kind === "book" ? (
                         <button
                           type="button"
-                          disabled={busy}
+                          disabled={busy || entry.purging}
                           onClick={() => void restore(entry.id, entry.title)}
                         >
                           Restore book
@@ -163,7 +212,9 @@ export function TrashView() {
                         <div className="actions">
                           <button
                             type="button"
-                            disabled={busy || entry.ownerDeleted}
+                            disabled={
+                              busy || entry.ownerDeleted || entry.purging
+                            }
                             title={
                               entry.ownerDeleted
                                 ? "Restore the deleted book first"
@@ -177,7 +228,7 @@ export function TrashView() {
                           </button>
                           <button
                             type="button"
-                            disabled={busy}
+                            disabled={busy || entry.purging}
                             onClick={() =>
                               setRevisionChoice({ entry, mode: "separate" })
                             }
@@ -240,6 +291,52 @@ function RevisionRestoreDialog({
         </button>
         <button type="button" onClick={onClose}>
           Cancel
+        </button>
+      </div>
+    </dialog>
+  );
+}
+
+function EmptyTrashDialog({
+  listing,
+  onClose,
+  onConfirm,
+}: {
+  listing: TrashListing;
+  onClose(): void;
+  onConfirm(): void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  return (
+    <dialog ref={dialog} aria-labelledby="empty-trash-title" onCancel={onClose}>
+      <h2 id="empty-trash-title">Permanently empty Trash?</h2>
+      <p>
+        {listing.entries.length}{" "}
+        {listing.entries.length === 1 ? "entry" : "entries"} ·{" "}
+        {storageSize(listing.bytes)} in retained files and covers.
+      </p>
+      <p>
+        This permanently removes deleted books, earlier files and their saved
+        positions. Once removal starts they cannot be restored. Source files
+        stay untouched. Covers still used by other entries are kept, so freed
+        space may be smaller.
+      </p>
+      {listing.unavailableFiles ? (
+        <p>
+          Missing or unreadable files are excluded from this total. Uncertain
+          files are kept for repair; failed purges remain visible and can be
+          retried.
+        </p>
+      ) : null}
+      <div className="actions">
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" onClick={onConfirm}>
+          Empty Trash permanently
         </button>
       </div>
     </dialog>

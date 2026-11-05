@@ -762,3 +762,81 @@ test("relocated Trash-only import restores an earlier revision and its position 
     await application?.close();
   }
 });
+
+test("relocated Empty Trash reconciles a failed final commit and preserves live files and sources across restart", async () => {
+  const rootPath = libraryFor(profile);
+  const seeded = openLibrary({ root: rootPath });
+  const source = resolve("tests/fixtures/known.pdf");
+  const before = await readFile(source);
+  const trashed = await addFileAsNewBook(seeded, source);
+  const live = await addFileAsNewBook(
+    seeded,
+    resolve("tests/fixtures/image-only.pdf"),
+  );
+  seeded.close();
+  let application: ElectronApplication | undefined;
+  try {
+    application = await launch();
+    let { library } = await catalogOf(application);
+    await library.evaluate(async (id) => {
+      const result = await window.borges.library.deleteBook(id);
+      if (!result.ok) throw new Error(result.message);
+    }, trashed.bookId);
+    const db = new DatabaseSync(join(rootPath, "catalog.sqlite"));
+    try {
+      db.exec(
+        "CREATE TRIGGER refuse_purge BEFORE DELETE ON trash_entries BEGIN SELECT RAISE(ABORT, 'purge commit failed'); END",
+      );
+      const result = await library.evaluate(async () => {
+        const snapshot = await window.borges.library.trash();
+        if (!snapshot.ok) throw new Error(snapshot.message);
+        return window.borges.library.emptyTrash(
+          snapshot.value.entries.map((e) => e.id),
+          snapshot.value.bytes,
+        );
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          purged: 0,
+          failures: [
+            { message: expect.stringContaining("purge commit failed") },
+          ],
+        },
+      });
+      expect(await readdir(join(rootPath, "files"))).toEqual([
+        live.path.slice(6),
+      ]);
+      db.exec("DROP TRIGGER refuse_purge");
+    } finally {
+      db.close();
+    }
+    await application.close();
+    application = await launch();
+    ({ library } = await catalogOf(application));
+    await library
+      .getByRole("navigation", { name: "Library" })
+      .getByRole("button", { name: "Trash", exact: true })
+      .click();
+    await expect(
+      library.getByText("Trash is empty.", { exact: true }),
+    ).toBeVisible();
+    expect(await readdir(join(rootPath, "files"))).toEqual([
+      live.path.slice(6),
+    ]);
+    expect(await readFile(source)).toEqual(before);
+    const verified = new DatabaseSync(join(rootPath, "catalog.sqlite"), {
+      readOnly: true,
+    });
+    try {
+      expect(verified.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(verified.prepare("SELECT id FROM books").all()).toEqual([
+        { id: live.bookId },
+      ]);
+    } finally {
+      verified.close();
+    }
+  } finally {
+    await application?.close();
+  }
+});
