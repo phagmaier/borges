@@ -91,6 +91,19 @@ export function registerLibraryIpc({
     if (library && !library.isDestroyed()) library.send(LIBRARY_CHANGED);
   };
 
+  async function quiesceReader(bookId: string): Promise<boolean> {
+    const reader = windows.catalogReader(bookId);
+    if (!reader) return false;
+    try {
+      await windows.captureCatalogReader(bookId);
+      readers.quiesce(reader.id);
+      return true;
+    } catch (error) {
+      if (!reader.isDestroyed()) reader.send("reader:resume");
+      throw error;
+    }
+  }
+
   function handle(
     channel: string,
     run: (...args: unknown[]) => unknown,
@@ -344,12 +357,8 @@ export function registerLibraryIpc({
       result = await restoreRevision({ root, database }, entryId, mode, {
         ...(typeof expectedCurrentId === "string" ? { expectedCurrentId } : {}),
         signal: controller.signal,
-        beforeCommit(bookId) {
-          const reader = windows.catalogReader(bookId);
-          if (reader) {
-            readers.quiesce(reader.id);
-            quiesced = bookId;
-          }
+        async beforeCommit(bookId) {
+          if (await quiesceReader(bookId)) quiesced = bookId;
         },
       });
       changed();
@@ -380,7 +389,7 @@ export function registerLibraryIpc({
       }
     }
   });
-  handle("replace-file", async (bookId) => {
+  async function replaceFile(bookId: unknown, contents = windows.library()) {
     const book = getBook(database, bookId as string);
     if (replacing || importing || trashBusy)
       throw new LibraryError(
@@ -392,7 +401,6 @@ export function registerLibraryIpc({
         .prepare("SELECT current_revision_id FROM books WHERE id = ?")
         .get(book.id)?.current_revision_id,
     );
-    const contents = windows.library();
     const parent = contents && BrowserWindow.fromWebContents(contents);
     if (!contents || !parent) throw new Error("The library window is closed.");
     replacing = true;
@@ -431,12 +439,8 @@ export function registerLibraryIpc({
           inspect: inspectBook,
           expectedRevisionId,
           signal: controller.signal,
-          beforeCommit() {
-            const reader = windows.catalogReader(book.id);
-            if (reader) {
-              readers.quiesce(reader.id);
-              quiesced = true;
-            }
+          async beforeCommit() {
+            quiesced = await quiesceReader(book.id);
           },
         },
       );
@@ -462,7 +466,26 @@ export function registerLibraryIpc({
         contents.off("did-start-navigation", navigating);
       }
     }
+  }
+  handle("replace-file", (bookId) => replaceFile(bookId));
+  ipcMain.handle("reader:replace-file", async (event) => {
+    const identity = windows.identityFor(event);
+    if (identity.kind !== "reader" || identity.book.source !== "catalog")
+      throw new Error("Only a catalog reader may replace its assigned book.");
+    try {
+      return {
+        ok: true,
+        value: await replaceFile(identity.book.id, event.sender),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        code: "failed",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
   });
+
   handle("import", async (kind, sectionId) => {
     if (kind !== "files" && kind !== "folders")
       throw new LibraryError("invalid", "Choose files or folders to import.");
@@ -565,9 +588,8 @@ export function registerLibraryIpc({
               contents.send("library:import-duplicate", { ...prompt, token });
           });
         },
-        beforeReplacement(bookId) {
-          const reader = windows.catalogReader(bookId);
-          if (reader) readers.quiesce(reader.id);
+        async beforeReplacement(bookId) {
+          await quiesceReader(bookId);
         },
         async afterReplacement(bookId) {
           try {
@@ -660,14 +682,14 @@ export function registerLibraryIpc({
   handle("unarchive", (bookId) => unarchiveBook(database, bookId), mutates);
   handle(
     "start-rereading",
-    (bookId) => {
+    async (bookId) => {
       // Quiesce an open reader first: flush and retire its session, so no
       // message from the old page can write after the reset. Then reload it,
       // which starts a new session at the beginning (or, if the reset
       // failed, resumes the unchanged position with a live session).
       const book = getBook(database, bookId as string);
       const reader = windows.catalogReader(book.id);
-      if (reader) readers.end(reader.id);
+      if (reader) await quiesceReader(book.id);
       try {
         return startRereading(database, book.id);
       } finally {

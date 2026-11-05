@@ -28,6 +28,7 @@ test("catalog PDF search reopens with usable results and retains its match throu
   await jump.fill("4");
   await jump.press("Enter");
   await expect(ui.getByRole("alert")).toContainText("1–3");
+  await expect(reader.getByRole("alert")).toHaveCount(0);
   await expect(ui.getByTestId("page-text")).toContainText("HARBOR THIRD");
   await jump.fill("1");
   await ui.getByRole("button", { name: "Go", exact: true }).click();
@@ -148,6 +149,7 @@ test("catalog EPUB search can be closed and reopened without losing its query re
   await jump.fill("101%");
   await jump.press("Enter");
   await expect(ui.getByRole("alert")).toContainText("0–100%");
+  await expect(reader.getByRole("alert")).toHaveCount(0);
   await expect(ui.getByTestId("visible-text")).toContainText(
     "HARBOR EPUB SECOND",
   );

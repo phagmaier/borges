@@ -161,3 +161,56 @@
   outline: 2px solid light-dark(#8a3b1e, #e3a47d);
   outline-offset: 2px;
 }
+
+.reader-error {
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 4px;
+  background: var(--paper);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+  pointer-events: auto;
+}
+.reader-error p {
+  border: 0;
+  box-shadow: none;
+}
+.reader-error > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+.reader-error button,
+.reader-window .replace-file-dialog button {
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.reader-window .replace-file-dialog {
+  box-sizing: border-box;
+  width: min(560px, calc(100vw - 32px));
+  padding: 22px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 30%);
+  font: inherit;
+}
+.reader-window .replace-file-dialog::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+.reader-window .replace-file-dialog h2 {
+  margin-top: 0;
+  font-size: 1.25rem;
+  font-weight: normal;
+}
+.reader-window .replace-file-dialog .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

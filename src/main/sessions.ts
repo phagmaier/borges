@@ -75,7 +75,7 @@ export class ReaderSessions {
    * retiring any earlier session of that owner (a reload).
    */
   begin(owner: number, bookId: string): ReaderSessionGrant {
-    this.end(owner);
+    this.quiesce(owner);
     const grant = beginReaderSession(this.database, bookId);
     this.sessions.set(owner, {
       bookId,
@@ -161,9 +161,9 @@ export class ReaderSessions {
       : null;
   }
 
-  /** Commit the owner's pending position now. */
+  /** Commit now, throwing on failure so a close/retry cannot claim success. */
   flush(owner: number): void {
-    this.commit(owner);
+    this.commit(owner, true);
   }
 
   /** Replacement must save and retire successfully before switching bytes.
@@ -182,7 +182,8 @@ export class ReaderSessions {
 
   /**
    * Flush, then retire the owner's session so no later message from it can
-   * write. Never throws: closing a window must not be blocked by storage.
+   * write. Forced destruction and an explicitly confirmed discard use this
+   * best-effort path; ordinary closes first drain and strictly flush.
    */
   end(owner: number): void {
     const session = this.sessions.get(owner);

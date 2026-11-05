@@ -97,6 +97,19 @@ const borges: BorgesApi = {
     },
   },
   reader: {
+    replaceFile: () => ipcRenderer.invoke("reader:replace-file"),
+    flush: () => ipcRenderer.invoke("reader:flush"),
+    drained: (token) => ipcRenderer.send("reader:drained", token),
+    onDrain(listener) {
+      const handler = (_: unknown, token: string) => listener(token);
+      ipcRenderer.on("reader:drain", handler);
+      return () => ipcRenderer.off("reader:drain", handler);
+    },
+    onResume(listener) {
+      const handler = () => listener();
+      ipcRenderer.on("reader:resume", handler);
+      return () => ipcRenderer.off("reader:resume", handler);
+    },
     copyLink: (address) => ipcRenderer.invoke("reader:copy-link", address),
     openBook: () => ipcRenderer.invoke("reader:open-book"),
     reportProgress: (report) => ipcRenderer.send("reader:progress", report),

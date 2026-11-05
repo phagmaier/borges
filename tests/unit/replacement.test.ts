@@ -485,3 +485,27 @@ it.each(["prompt", "cover-pending", "committed"])(
     }
   },
 );
+
+it("cancels replacement if its reader drain is interrupted before the catalog commit", async () => {
+  const { added } = await seed();
+  const controller = new AbortController();
+  await expect(
+    replaceBookFile(library, added.bookId, epub, {
+      signal: controller.signal,
+      async beforeCommit() {
+        await Promise.resolve();
+        controller.abort();
+      },
+    }),
+  ).rejects.toMatchObject({ code: "cancelled" });
+  expect(
+    library.database
+      .prepare("SELECT current_revision_id FROM books WHERE id = ?")
+      .get(added.bookId)?.current_revision_id,
+  ).toBe(added.revisionId);
+  expect(
+    library.database.prepare("SELECT count(*) AS n FROM trash_entries").get()
+      ?.n,
+  ).toBe(0);
+  expect((await reconcileOperations(library)).unrecognized).toEqual([]);
+});

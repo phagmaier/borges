@@ -6,7 +6,7 @@ export function ReplaceFileDialog({
   onClose,
   onReplace,
 }: {
-  book: BookSummary;
+  book: Pick<BookSummary, "title">;
   onClose(): void;
   onReplace(): void;
 }) {
@@ -17,6 +17,7 @@ export function ReplaceFileDialog({
   return (
     <dialog
       ref={dialog}
+      className="replace-file-dialog"
       aria-labelledby="replace-file-title"
       onCancel={onClose}
     >

@@ -127,7 +127,7 @@ export interface AddBookOptions {
   expectedDigest?: FileDigest;
   beforeNewBookCommit?: () => void;
   chooseDuplicate?: (prompt: DuplicatePrompt) => Promise<DuplicateChoice>;
-  beforeReplacement?: (bookId: string) => void;
+  beforeReplacement?: (bookId: string) => void | Promise<void>;
   now?: () => number;
   /** Called at each protocol point; throwing simulates a failure there. */
   checkpoint?: (step: ImportStep) => void;
@@ -174,7 +174,7 @@ export async function addFileAsNewBook(
 export interface ReplaceBookOptions extends Omit<AddBookOptions, "sectionId"> {
   /** Recheck the revision selected before the file chooser, if supplied. */
   expectedRevisionId?: string;
-  beforeCommit?: () => void;
+  beforeCommit?: () => void | Promise<void>;
 }
 
 /** Publish a new immutable revision; preserve the target book and old location. */
@@ -489,7 +489,7 @@ async function publishBookFile(
     let joinedSection = false;
     if (target) {
       checkReplacementTarget(database, target);
-      target.beforeCommit?.();
+      await target.beforeCommit?.();
     }
     immediate(database, () => {
       const at = now();

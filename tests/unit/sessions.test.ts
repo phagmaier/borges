@@ -234,10 +234,17 @@ describe("sender binding", () => {
     sessions.report(A, report(grant, 1, 11));
     vi.runAllTimers();
     expect(codes()).toEqual([[A, "storage-failed"]]);
+    expect(() => sessions.flush(A)).toThrow(/disk full/);
+    expect(storedPage("a-1")).toBeNull();
+    // A reload must not discard the pending position if retry still fails.
+    expect(() => sessions.begin(A, "a")).toThrow(/disk full/);
+    expect(sessions.sessionOf(A)?.generation).toBe(grant.generation);
     database.exec("DROP TRIGGER fail_positions");
-    sessions.end(A);
+    sessions.flush(A);
     expect(storedPage("a-1")).toEqual({ pdf_page: 11, sequence: 1 });
     expect(codes()).toEqual([
+      [A, "storage-failed"],
+      [A, "storage-failed"],
       [A, "storage-failed"],
       [A, "ok"],
     ]);

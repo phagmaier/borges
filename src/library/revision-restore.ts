@@ -14,7 +14,7 @@ import type { RestoredImportInfo } from "./trash-matches.ts";
 
 export interface RevisionRestoreOptions {
   expectedCurrentId?: string;
-  beforeCommit?: (bookId: string) => void;
+  beforeCommit?: (bookId: string) => void | Promise<void>;
   signal?: AbortSignal;
   checkpoint?: TrashCheckpoint;
   publicationCheckpoint?: AddBookOptions["checkpoint"];
@@ -160,7 +160,7 @@ export async function restoreRevision(
       ],
     };
   }
-  options.beforeCommit?.(target.bookId);
+  await options.beforeCommit?.(target.bookId);
   storage(
     () =>
       immediate(database, () => {

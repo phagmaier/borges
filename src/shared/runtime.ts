@@ -227,6 +227,11 @@ export interface BorgesApi {
     copyLink(address: string): Promise<void>;
     /** Start this window's session for its assigned catalog book. */
     openBook(): Promise<OpenedBook>;
+    replaceFile(): Promise<LibraryResult<{ warnings: string[] } | null>>;
+    flush(): Promise<void>;
+    drained(token: string): void;
+    onDrain(listener: (token: string) => void): () => void;
+    onResume(listener: () => void): () => void;
     /** Queue a position; the outcome arrives through `onProgressResult`. */
     reportProgress(report: ProgressReport): void;
     /** The engine rendered the book (status Unread → Currently Reading). */

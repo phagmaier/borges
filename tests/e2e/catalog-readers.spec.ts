@@ -1,5 +1,5 @@
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Page } from "@playwright/test";
 import {
@@ -353,6 +353,7 @@ test.describe("failed opens", () => {
     await expect(reader.getByRole("alert")).toContainText(
       "could not be opened",
     );
+    await reader.screenshot({ path: test.info().outputPath("load-error.png") });
     expect(stored(profile, broken)).toMatchObject({
       status: "unread",
       page: null,
@@ -369,6 +370,7 @@ test.describe("failed opens", () => {
           .get(pdf)?.path,
       ),
     );
+    const original = await readFile(join(profile, "library", path));
     await rm(join(profile, "library", path));
     const missing = application.waitForEvent("window");
     await bookButton(library, "Known PDF").click();
@@ -377,5 +379,40 @@ test.describe("failed opens", () => {
       "could not be read from the library",
     );
     expect(stored(profile, pdf)).toMatchObject({ status: "unread" });
+    await writeFile(join(profile, "library", path), original);
+    await missingReader.getByRole("button", { name: "Retry reader" }).click();
+    await expect(
+      missingReader
+        .frameLocator('iframe[title="Book content"]')
+        .getByTestId("page-text"),
+    ).toContainText("ORCHID FIRST");
+    await expect(missingReader.getByRole("alert")).toHaveCount(0);
+
+    // An engine parse failure can be retried and replaced from its assigned
+    // reader without granting library privileges or targeting another book.
+    await reader.getByRole("button", { name: "Retry reader" }).click();
+    await expect(reader.getByRole("alert")).toContainText(
+      "could not be opened",
+    );
+    await reader.getByRole("button", { name: "Replace file…" }).click();
+    await reader.screenshot({
+      path: test.info().outputPath("reader-replace-confirmation.png"),
+    });
+    await application.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = (async () => ({
+        canceled: false,
+        filePaths: [path],
+      })) as typeof dialog.showOpenDialog;
+    }, resolve("tests/fixtures/reader-corpus.pdf"));
+    await reader
+      .getByRole("dialog")
+      .getByRole("button", { name: "Choose replacement…" })
+      .click();
+    await expect(
+      reader.frameLocator('iframe[title="Book content"]').getByRole("status"),
+    ).toHaveText("Ready");
+    await expect(reader.getByRole("alert")).toHaveCount(0);
+    await expect.poll(() => stored(profile, broken).status).toBe("reading");
+    expect(stored(profile, pdf).page).toBe(1);
   });
 });

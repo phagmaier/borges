@@ -7,9 +7,9 @@ import { foldKey, LibraryError } from "./rules.ts";
 export interface ReplacementTarget {
   bookId: string;
   revisionId: string;
-  /** Synchronous: flush/retire an open reader immediately before the switch.
-   * Throwing prevents the switch. No event-loop turn separates it from commit. */
-  beforeCommit?: () => void;
+  /** Drain queued engine commands, then flush/retire an open reader before
+   * the switch. Rejection prevents the switch; commit rechecks the target. */
+  beforeCommit?: () => void | Promise<void>;
 }
 
 export function checkReplacementTarget(

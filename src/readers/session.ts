@@ -1,3 +1,6 @@
+/** A rejected reader control value; the engine remains usable. */
+export class ReaderInputError extends Error {}
+
 export type ReaderLocation =
   | { format: "pdf"; page: number; x: number; y: number }
   | {

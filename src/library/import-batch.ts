@@ -66,7 +66,7 @@ export interface ImportBatchOptions {
   onRestoreConflict?: (bookId: string) => Promise<void>;
   chooseTrash?: (prompt: TrashMatchPrompt) => Promise<TrashChoice>;
   chooseDuplicate?: (prompt: DuplicatePrompt) => Promise<DuplicateChoice>;
-  beforeReplacement?: (bookId: string) => void;
+  beforeReplacement?: (bookId: string) => void | Promise<void>;
   afterReplacement?: (bookId: string) => Promise<string | null>;
   /** Imported books join this section; null or absent means Unfiled. */
   sectionId?: string | null;
@@ -188,8 +188,8 @@ async function importOne(
           return await restoreRevision(library, candidate.entryId, mode, {
             ...(signal ? { signal } : {}),
             expectedCurrentId: candidate.currentRevisionId,
-            beforeCommit(bookId) {
-              beforeReplacement?.(bookId);
+            async beforeCommit(bookId) {
+              await beforeReplacement?.(bookId);
               quiesced = bookId;
             },
           });
@@ -200,8 +200,8 @@ async function importOne(
         }
       },
       ...(chooseDuplicate ? { chooseDuplicate } : {}),
-      beforeReplacement(bookId) {
-        beforeReplacement?.(bookId);
+      async beforeReplacement(bookId) {
+        await beforeReplacement?.(bookId);
         quiesced = bookId;
       },
       ...(inspect ? { inspect } : {}),

@@ -22,13 +22,39 @@ interface WindowEntry {
 export class WindowCoordinator {
   private readonly entries = new Map<string, WindowEntry>();
   private quitting = false;
+  private preparingQuit = false;
   private readonly closingBooks = new Set<string>();
 
   constructor(
     private readonly shellUrl: string,
     private readonly preloadPath: string,
     private readonly onReaderClosed: (owner: number) => void = () => {},
+    private readonly prepareReaderClose: (
+      owner: number,
+    ) => Promise<boolean> = async () => true,
+    private readonly captureReader: (
+      owner: number,
+    ) => Promise<void> = async () => {},
   ) {}
+
+  async prepareQuit(): Promise<boolean> {
+    this.preparingQuit = true;
+    try {
+      for (const { window, identity } of [...this.entries.values()]) {
+        if (
+          identity.kind === "reader" &&
+          identity.book.source === "catalog" &&
+          !window.isDestroyed()
+        ) {
+          if (!(await this.prepareReaderClose(window.webContents.id)))
+            return false;
+        }
+      }
+      return true;
+    } finally {
+      this.preparingQuit = false;
+    }
+  }
 
   beginQuit(): void {
     this.quitting = true;
@@ -65,6 +91,20 @@ export class WindowCoordinator {
     });
   }
 
+  /** Pause input and capture commands already in flight, without retiring
+   * the session. The caller must reload or resume it after its operation. */
+  async captureCatalogReader(bookId: string): Promise<void> {
+    const contents = this.catalogReader(bookId);
+    if (contents) {
+      try {
+        await this.captureReader(contents.id);
+      } catch (error) {
+        if (!contents.isDestroyed()) contents.send("reader:resume");
+        throw error;
+      }
+    }
+  }
+
   /** Open or focus the one reader for a catalog book (already validated). */
   async openCatalogReader(book: { id: string; title: string }): Promise<void> {
     if (this.closingBooks.has(book.id))
@@ -88,6 +128,7 @@ export class WindowCoordinator {
   ): Promise<void> {
     const entry = this.entries.get(`catalog:${bookId}`);
     if (!entry || entry.window.isDestroyed()) return;
+    await this.captureCatalogReader(bookId);
     this.closingBooks.add(bookId);
     try {
       beforeClose(entry.window.webContents.id);
@@ -116,6 +157,8 @@ export class WindowCoordinator {
       });
     } finally {
       this.closingBooks.delete(bookId);
+      if (!entry.window.isDestroyed())
+        entry.window.webContents.send("reader:resume");
     }
   }
 
@@ -154,7 +197,8 @@ export class WindowCoordinator {
   }
 
   private async open(key: string, identity: DevelopmentWindow): Promise<void> {
-    if (this.quitting) throw new Error("The application is quitting.");
+    if (this.quitting || this.preparingQuit)
+      throw new Error("The application is quitting.");
     let entry = this.entries.get(key);
     if (!entry) {
       const window = new BrowserWindow({
@@ -199,6 +243,35 @@ export class WindowCoordinator {
         if (!allowed) event.preventDefault();
       });
       const owner = window.webContents.id;
+      let closing = false;
+      let prepared = false;
+      window.on("close", (event) => {
+        if (
+          this.quitting ||
+          prepared ||
+          this.closingBooks.has(
+            identity.kind === "reader" ? identity.book.id : "",
+          ) ||
+          identity.kind !== "reader" ||
+          identity.book.source !== "catalog"
+        )
+          return;
+        event.preventDefault();
+        if (closing) return;
+        closing = true;
+        void this.prepareReaderClose(owner)
+          .then((ready) => {
+            if (ready && !window.isDestroyed()) {
+              prepared = true;
+              window.close();
+              prepared = false;
+            }
+          })
+          .catch(console.error)
+          .finally(() => {
+            closing = false;
+          });
+      });
       window.on("closed", () => {
         if (this.entries.get(key)?.window === window) this.entries.delete(key);
         if (identity.kind === "reader") this.onReaderClosed(owner);

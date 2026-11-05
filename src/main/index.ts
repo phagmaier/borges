@@ -5,6 +5,7 @@ import {
   app,
   type BrowserWindow,
   clipboard,
+  dialog,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
   ipcMain,
@@ -28,6 +29,7 @@ import {
 import { resolveServedAsset } from "./assets";
 import { createBookInspector } from "./extraction";
 import { registerLibraryIpc } from "./library-ipc";
+import { ReaderDrain } from "./reader-drain";
 import { ReaderSessions } from "./sessions";
 import { showStartupFailure } from "./startup";
 import { WindowCoordinator } from "./windows";
@@ -39,10 +41,17 @@ const developmentUrl = app.isPackaged
   : process.env.ELECTRON_RENDERER_URL;
 const shellUrl = developmentUrl ?? "borges://app/index.html";
 let sessions: ReaderSessions | undefined;
+const readerDrain = new ReaderDrain();
 const windows = new WindowCoordinator(
   shellUrl,
   join(directory, "../preload/index.cjs"),
   (owner) => sessions?.end(owner),
+  prepareReaderClose,
+  async (owner) => {
+    const contents = webContents.fromId(owner);
+    if (contents && !contents.isDestroyed() && sessions?.sessionOf(owner))
+      await readerDrain.request(contents);
+  },
 );
 
 // The setup shell uses a separate profile and never opens the user's library.
@@ -205,11 +214,60 @@ async function openAssignedBook(
 }
 
 app.on("window-all-closed", () => app.quit());
-app.on("before-quit", () => {
-  windows.beginQuit();
-  // Explicit Quit flushes every open reader's position before windows close.
-  sessions?.endAll();
+let quitReady = false;
+let preparingQuit = false;
+const suspendedReaders = new Set<number>();
+app.on("before-quit", (event) => {
+  if (quitReady || !sessions) return;
+  event.preventDefault();
+  if (preparingQuit) return;
+  preparingQuit = true;
+  void windows
+    .prepareQuit()
+    .then((ready) => {
+      if (!ready) return;
+      windows.beginQuit();
+      sessions?.endAll();
+      quitReady = true;
+      app.quit();
+    })
+    .catch(console.error)
+    .finally(() => {
+      for (const owner of suspendedReaders) {
+        const contents = webContents.fromId(owner);
+        if (!quitReady && contents && !contents.isDestroyed())
+          contents.send("reader:resume");
+      }
+      suspendedReaders.clear();
+      preparingQuit = false;
+    });
 });
+
+async function prepareReaderClose(owner: number): Promise<boolean> {
+  const contents = webContents.fromId(owner);
+  if (!contents || contents.isDestroyed() || !sessions?.sessionOf(owner))
+    return true;
+  try {
+    await readerDrain.request(contents);
+    sessions.flush(owner);
+    return true;
+  } catch (error) {
+    const choice = await dialog.showMessageBox({
+      type: "warning",
+      title: "Position not saved",
+      message: "The reader's latest position could not be saved.",
+      detail: `${error instanceof Error ? error.message : String(error)}\nKeep the reader open to retry saving, or close using the last committed position.`,
+      buttons: ["Keep reader open", "Close without saving"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    return choice.response === 1;
+  } finally {
+    if (preparingQuit) suspendedReaders.add(owner);
+    else if (!contents.isDestroyed()) contents.send("reader:resume");
+  }
+}
 // Closing the catalog checkpoints its WAL and releases the root lock.
 app.on("will-quit", () => library?.close());
 
@@ -332,6 +390,23 @@ if (!app.requestSingleInstanceLock()) {
       ipcMain.handle("reader:open-book", (event) =>
         openAssignedBook(opened, readers, event),
       );
+      ipcMain.on("reader:drained", (event, token: unknown) => {
+        try {
+          assignedCatalogBook(event);
+        } catch {
+          return;
+        }
+        readerDrain.complete(event.sender.id, token);
+      });
+      ipcMain.handle("reader:flush", async (event) => {
+        assignedCatalogBook(event);
+        try {
+          await readerDrain.request(event.sender);
+          readers.flush(event.sender.id);
+        } finally {
+          if (!event.sender.isDestroyed()) event.sender.send("reader:resume");
+        }
+      });
       ipcMain.handle("reader:copy-link", (event, address: unknown) => {
         if (windows.identityFor(event).kind !== "reader")
           throw new Error("Only a reader window may copy a reference.");

@@ -2,6 +2,7 @@ import { externalLink } from "../shared/links";
 import {
   type ContentsItem,
   panPosition,
+  ReaderInputError,
   type ReaderLocation,
   type ReaderSession,
   type ReaderSizing,
@@ -317,7 +318,9 @@ export class EpubSession extends EventTarget implements ReaderSession {
       !/^(?:\d+(?:\.\d+)?|\.\d+)%$/.test(value) ||
       Number(value.slice(0, -1)) > 100
     )
-      throw new Error("Enter an EPUB percentage from 0–100%, for example 50%.");
+      throw new ReaderInputError(
+        "Enter an EPUB percentage from 0–100%, for example 50%.",
+      );
     this.clearSearch();
     this.anchorCfi = undefined;
     await this.view?.goToFraction(Number(value.slice(0, -1)) / 100);

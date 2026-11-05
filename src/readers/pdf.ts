@@ -10,6 +10,7 @@ import { externalLink } from "../shared/links";
 import {
   type ContentsItem,
   panPosition,
+  ReaderInputError,
   type ReaderLocation,
   type ReaderSession,
   type ReaderSizing,
@@ -192,7 +193,7 @@ export class PdfSession extends EventTarget implements ReaderSession {
       Number(value) < 1 ||
       Number(value) > (this.document?.numPages ?? 0)
     )
-      throw new Error(
+      throw new ReaderInputError(
         `Enter a physical page from 1–${this.document?.numPages ?? 0}.`,
       );
     this.clearSearch();

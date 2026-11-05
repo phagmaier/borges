@@ -2,8 +2,10 @@ import { EpubSession } from "../../readers/epub";
 import { PdfSession } from "../../readers/pdf";
 import {
   parseSnapshot,
+  ReaderInputError,
   type ReaderLocation,
   type ReaderSession,
+  type ReaderSizing,
   type Restoration,
   type SearchHit,
 } from "../../readers/session";
@@ -37,22 +39,36 @@ let session: ReaderSession;
 let revision = "";
 let disposed = false;
 let commands = Promise.resolve();
+let commandFailed = false;
 let search: AbortController | undefined;
 let hits: SearchHit[] = [];
 let selected = -1;
 let queryVersion = 0;
 function report(reason: unknown) {
-  alert.hidden = false;
+  alert.hidden = catalogMode && !(reason instanceof ReaderInputError);
   alert.textContent = String(reason);
+  if (!(reason instanceof ReaderInputError))
+    tellParent({ type: "borges:error", message: String(reason) });
 }
-function run(action: () => Promise<void>, clearError = true) {
+function run(
+  action: () => Promise<void>,
+  clearError = true,
+  captureAfter = true,
+) {
   commands = commands
     .then(async () => {
       if (disposed) return;
       if (clearError) alert.hidden = true;
       await action();
+      if (captureAfter) {
+        commandFailed = false;
+        reportPosition();
+      }
     })
-    .catch(report);
+    .catch((reason: unknown) => {
+      if (!(reason instanceof ReaderInputError)) commandFailed = true;
+      report(reason);
+    });
   return commands;
 }
 function closeSearch() {
@@ -235,7 +251,7 @@ async function size() {
     value < 0.25 ||
     value > 8
   )
-    throw new Error("Font size must be 8–72; zoom must be 0.25–8.");
+    throw new ReaderInputError("Font size must be 8–72; zoom must be 0.25–8.");
   await session.setSizing({ fontSize, zoom: value });
   reportPosition();
 }
@@ -291,16 +307,43 @@ interface OpenMessage {
 }
 let parentOrigin: string | null = null;
 let reporting = false;
+let lastPosition:
+  | { type: "borges:position"; location: ReaderLocation; sizing: ReaderSizing }
+  | undefined;
+window.addEventListener("message", (event) => {
+  if (event.source !== window.parent || event.origin !== parentOrigin) return;
+  if (event.data?.type === "borges:resume") {
+    document.body.inert = false;
+  } else if (
+    event.data?.type === "borges:drain" &&
+    typeof event.data.token === "string"
+  ) {
+    document.body.inert = true;
+    const token = event.data.token;
+    void run(
+      async () => {
+        // A failed engine command may have partially moved its internal state.
+        // Keep the last working location rather than acknowledging that state.
+        if (commandFailed && lastPosition) tellParent(lastPosition);
+        else reportPosition(); // Includes pan whose throttled report has not fired.
+        tellParent({ type: "borges:drained", token });
+      },
+      false,
+      false,
+    );
+  }
+});
 function tellParent(message: object) {
   if (parentOrigin) window.parent.postMessage(message, parentOrigin);
 }
 function reportPosition() {
-  if (!reporting || disposed) return;
-  tellParent({
+  if (!reporting || disposed || commandFailed) return;
+  lastPosition = {
     type: "borges:position",
     location: session.capture(),
-    sizing: session.sizing,
-  });
+    sizing: { ...session.sizing },
+  };
+  tellParent(lastPosition);
 }
 function receiveBook(): Promise<OpenMessage> {
   return new Promise((resolve) => {

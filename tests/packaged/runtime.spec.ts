@@ -475,12 +475,27 @@ test("packaged readers save/resume, replace across formats and retain the old po
     await surface.press("ArrowRight");
     await expect(ui.getByTestId("page-text")).toContainText("CEDAR SECOND");
     await expect.poll(page, { timeout: 2000 }).toBe(2);
+    // Quit must await a page turn still rendering in the relocated engine.
+    await ui.locator("#surface").evaluate((surface) => {
+      const win = surface.ownerDocument.defaultView;
+      const next =
+        surface.ownerDocument.querySelector<HTMLButtonElement>("#next");
+      if (!win || !next) throw new Error("Missing reader controls");
+      const raf = win.requestAnimationFrame.bind(win);
+      win.requestAnimationFrame = (callback) =>
+        raf((time) => {
+          win.setTimeout(() => callback(time), 400);
+        });
+      next.click();
+    });
   } finally {
     await application.close();
   }
   application = await launch(profile);
   try {
     const { ui } = await read(application);
+    await expect(ui.getByTestId("page-text")).toContainText("HARBOR THIRD");
+    await ui.getByRole("button", { name: "Previous", exact: true }).click();
     await expect(ui.getByTestId("page-text")).toContainText("CEDAR SECOND");
     const library = await application.firstWindow();
     await application.evaluate(({ dialog }, path) => {
