@@ -105,6 +105,13 @@ function png(width: number, height: number, index: number) {
   ]);
 }
 
+/** Created cover thumbnails at three sizes, including the product maximum.
+ * Each index has distinct RGB pixels; no shared-image deduplication. */
+export function representativeCover(index: number): Buffer {
+  const width = [256, 384, 512][index % 3] ?? 512;
+  return png(width, (width * 3) / 2, index);
+}
+
 /** Variation for the many smaller catalog books: distinct prose and heading. */
 export interface Variant {
   seed: number;

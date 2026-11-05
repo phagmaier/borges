@@ -1,6 +1,6 @@
 # Development setup
 
-The development environment is installed on the user's Arch Linux/Hyprland desktop. The diagnostic Electron shell opens one library and named readers with bundled known PDF/EPUB fixtures. Engine navigation/search/sizing, explicit snapshot restoration, diagnostic adversarial isolation, packaged-runtime SQLite/schema handling, catalog readers with central autosave, packaged resource measurements with a 500-entry catalog (A13), and the library window (browsing, search/filters, sections and memberships, status/Archive actions, metadata editing and manual cover correction; M3-01 to M3-05) are verified. Startup refusals and unresolved recovery diagnostics are shown in windows (M3-07). Extracted covers, visual prototypes and milestones four to six remain pending. It does not open/change user book files and uses a separate `borges-development` Electron profile. Its versioned, locked library catalog lives in `<profile>/library` for unpackaged builds; see [M2-01](#catalog-schema-migrations-and-root-lock-m2-01). Reopening an existing reader requests activation; this Hyprland policy answers with an urgency hint rather than focus, a recorded platform limit; see [M1-02 evidence](#multi-window-spike-m1-02).
+The development environment is installed on the user's Arch Linux/Hyprland desktop. The diagnostic Electron shell opens one library and named readers with bundled known PDF/EPUB fixtures. Engine navigation/search/sizing, explicit snapshot restoration, diagnostic adversarial isolation, packaged-runtime SQLite/schema handling, catalog readers with central autosave, packaged resource measurements with a 500-entry catalog (A13), and the library window (browsing, search/filters, sections and memberships, status/Archive actions, metadata editing and manual cover correction; M3-01 to M3-05) are verified. Startup refusals and unresolved recovery diagnostics are shown in windows (M3-07). Cover-bearing catalog measurements and lazy-loading/disposal checks are verified (M3-08). Extracted covers, visual prototypes and milestones four to six remain pending. It does not open/change user book files and uses a separate `borges-development` Electron profile. Its versioned, locked library catalog lives in `<profile>/library` for unpackaged builds; see [M2-01](#catalog-schema-migrations-and-root-lock-m2-01). Reopening an existing reader requests activation; this Hyprland policy answers with an urgency hint rather than focus, a recorded platform limit; see [M1-02 evidence](#multi-window-spike-m1-02).
 
 ## Start working
 
@@ -489,3 +489,37 @@ Evidence:
 - Initial full smoke runs reproduced the previously recorded early `net.fetch`/Playwright failures (`Request is not a constructor` and `ERR_UNKNOWN_URL_SCHEME`). The protocol-isolation case now waits for validated library startup before fetching; all six 403/body assertions remain. Ten focused repetitions and the final full serial run pass. An overlapping rebuild also invalidated one exploratory UI run; final verification ran builds and GUI suites serially.
 
 Both error and recovery views were inspected in native screenshots. This session supplied the available Hyprland X11 display explicitly (`DISPLAY=:1`, `WAYLAND_DISPLAY=wayland-1`, `XDG_RUNTIME_DIR=/run/user/1000`); no compositor configuration changed. Direct code/test/requirements review included both new files and the readiness correction, with no unresolved in-scope finding. No commit was created. Performance was not remeasured; cover-bearing A13 measurements remain M3-08, and final appearance remains M3-06. No repair UI, power-loss claim or broader migration/recovery feature is added here.
+
+## Cover-bearing catalog measurements (M3-08)
+
+Implemented on 2026-11-04 without application, schema or dependency changes. Both final complete runs (fresh-seeded and prebuilt catalog) pass all three measurement cases and every budget. Reports are `dist/measurements/m3-08-seeded-final.json` and `m3-08-prebuilt-final.json`; the fresh seed took 324 s and the complete run 7.7 minutes.
+
+`mise run measure` now seeds 400 distinct created PNG covers through the real cover-publication service alongside the existing 500 books. One fifth of entries deliberately have no cover. The generated PNGs already satisfy the thumbnail bounds (256×384, 384×576 or 512×768); seeding uses an identity normalizer, while M3-05's native tests still verify source-image normalization. The library contains 48.9 MB of covers and 86.1 MB of books, with 343 cover-bearing entries among the 429 unarchived books. Seeding takes about five minutes on this HDD (~4,300 durable transactions), and the full suite about eight minutes. Cover-free templates from earlier milestones are rejected. To build a new template for iteration:
+
+```sh
+mise exec -- node scripts/build-measure-catalog.ts dist/a13-covers-template
+BORGES_MEASURE_CATALOG=$PWD/dist/a13-covers-template mise run measure
+```
+
+Choose an unused template path; the builder refuses existing paths. Measurement runs copy templates rather than using them in place. Recorded fresh-seeded runs omit `BORGES_MEASURE_CATALOG`. Reports remain under `dist/measurements/`, with `BORGES_MEASURE_REPORT` selecting the filename.
+
+The new native case traverses every grid row twice in a fixed 1000×720 viewport, checks decoded visible images against the cover plan, verifies offscreen disposal and reload on return, and switches to List and back. Kernel access times establish that browsing reads exactly the 343 live covers and no books; List reads no covers. Instrumented blob ownership and a 25 ms decode delay expose overlapping jobs: both complete runs peak at four decodes and 15 live URLs, and List releases every URL. Launch/reader timings run without this instrumentation or forced collection. The measurement's batch helper now scrolls and waits for increasing row counts: clicking Show more raced automatic batching when scrolling detached the button. No product behavior changed. Native screenshots show decoded covers and missing-cover placeholders.
+
+Results across the final fresh-seeded and prebuilt-catalog runs, on the same i5-9400/UHD 630, 11.5 GiB, home HDD/btrfs, Hyprland desktop and pinned Electron runtime as the earlier A13 measurements; display variables were supplied as for M3-07:
+
+| Measure | Observed | Budget |
+| --- | --- | --- |
+| Warm launch to grid, median | 0.67–0.74 s | unchanged 1.5 s |
+| Warm launch with visible covers decoded, median | 1.09–1.13 s | new 2 s |
+| Evicted launch with visible covers decoded, max | 3.52–4.10 s | new 8 s |
+| Idle / two-reader catalog query p95 | ≤ 16.9 / ≤ 17.7 ms | unchanged 50 ms |
+| PDF / EPUB first or resumed open, max | 0.69 / 0.87 s | unchanged 1.5 s |
+| Position acknowledgement, max | 659 ms | unchanged 1 s |
+| Idle / two readers after search, total PSS | 349–352 / 605–617 MiB | unchanged 400 / 800 MiB |
+| One / two complete cover traversals, total PSS | 659–662 / 752–755 MiB | new 1600 MiB |
+
+The full-grid budget is separate from idle/reader memory and approximately twice the observed two-pass peak. Initial probes reached 600–611 MiB after one pass and 743–751 MiB after two; a provisional 600 MiB probe bound failed. A diagnostic-only renderer garbage collection reduced a 744 MiB List sample to 450 MiB: releasing URLs does not immediately reclaim all image/rendering memory. Clearing the temporary decoder's source did not improve retention (668/776 MiB) and was reverted. Final measurements neither force collection nor include that experiment. These observations establish reclaimable memory, not a long-session leak-free guarantee.
+
+Verification and review: `mise run check` passes types, Biome, 199 unit cases and build. The final `smoke` run passes 46 native cases; `smoke-packaged` passes all 10. An earlier full smoke had 45/46 passes and five focused repetitions had 4/5 passes: the unchanged A14 chapter-message test intermittently observed a newer EPUB save sequence with identical location/settings; its cause is not established. Its assertions remain intact; the final full rerun passes. Three mutations to disposable packaged copies fail the new case: eager loading reads 80 covers (bound <40), removing the job limit permits 13 decodes (bound 4), and skipping revocation retains 376 URLs (bound <40). Original packaged bytes were restored, then rebuilt. Direct code/test/spec review found no unresolved in-scope defect. No commit was created.
+
+Limits: synthetic covers, one machine/display scale, two cover traversals and five reader reopen cycles; partial cache eviction rather than a post-boot cold start. No extracted-cover generation, very long-session memory proof or final visual design is claimed. M3-06 and milestone-four import remain separate work.

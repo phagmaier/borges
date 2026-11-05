@@ -6,6 +6,7 @@ import {
   readdir,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { cpus, release, totalmem } from "node:os";
@@ -64,7 +65,9 @@ const live = plan.filter((book) => !book.archived).length;
 const budgets = {
   firstRunLaunchMs: 8000,
   catalogWarmLaunchMedianMs: 1500,
+  catalogWarmCoversMedianMs: 2000,
   catalogEvictedLaunchMaxMs: 7000,
+  catalogEvictedCoversMaxMs: 8000,
   catalogQueryP95Ms: 50,
   readerOpenMaxMs: 1500,
   pageTurnP95Ms: 300,
@@ -74,13 +77,16 @@ const budgets = {
   epubFullSearchMs: 1000,
   rendererExitMaxMs: 1000,
   libraryIdlePssMiB: 400,
+  // M3-08: two complete cover traversals retained 743–778 MiB before GC.
+  // This separate budget includes those caches; idle/reader limits stay put.
+  libraryBrowsedPssMiB: 1600,
   twoReadersPssMiB: 800,
   closedReadersOverIdleMiB: 60,
   openCloseCycleGrowthMiB: 100,
 };
 
 test.beforeAll(async () => {
-  test.setTimeout(600_000); // Seeding commits ~2,600 transactions on the HDD.
+  test.setTimeout(600_000); // Seeding commits ~4,300 transactions on the HDD.
   // Relocate onto the same filesystem a personal install would use, not the
   // tmpfs default temp directory; dist/ is ignored by Git.
   await mkdir(resolve("dist"), { recursive: true });
@@ -96,12 +102,21 @@ test.beforeAll(async () => {
   if (template) await cp(template, libraryRoot, { recursive: true });
   else seedMs = await buildCatalog(libraryRoot);
   entries = catalogEntries(libraryRoot);
+  // Distinct assets prevent a shared thumbnail/cache from hiding eager loads.
+  const covers = [...entries.values()].flatMap((entry) =>
+    entry.coverPath ? [entry.coverPath] : [],
+  );
+  expect(covers).toHaveLength(400);
+  expect(new Set(covers).size).toBe(400);
   pdf = representativePdf();
   epub = representativeEpub();
   // The large entries are the generator's default documents.
   expect(entries.get(LARGE_PDF)?.size).toBe(pdf.bytes.length);
   expect(entries.get(LARGE_EPUB)?.size).toBe(epub.bytes.length);
   const sizes = [...entries.values()].map((entry) => entry.size);
+  const coverBytes = await Promise.all(
+    covers.map(async (path) => (await stat(join(libraryRoot, path))).size),
+  );
   report.catalog = {
     entries: entries.size,
     pdf: plan.filter((book) => book.format === "pdf").length,
@@ -112,6 +127,9 @@ test.beforeAll(async () => {
     bytes: sizes.reduce((sum, size) => sum + size, 0),
     smallestBytes: Math.min(...sizes),
     largestBytes: Math.max(...sizes),
+    covers: covers.length,
+    missingCovers: entries.size - covers.length,
+    coverBytes: coverBytes.reduce((sum, size) => sum + size, 0),
     seedMs:
       seedMs === null ? "copied from BORGES_MEASURE_CATALOG" : round(seedMs),
   };
@@ -233,6 +251,60 @@ async function catalogShown(library: Page, expected: number) {
   await expect(
     library.getByRole("list", { name: "Books" }).getByRole("listitem"),
   ).toHaveCount(Math.min(expected, RESULT_BATCH), { timeout: 30_000 });
+}
+
+/** All viewport-visible cards with planned covers have decoded images. The
+ * missing-cover cards must continue to use placeholders. */
+async function coversShown(library: Page) {
+  await expect
+    .poll(
+      () =>
+        library.evaluate(
+          (titles) => {
+            const viewport = document
+              .querySelector(".library-main")
+              ?.getBoundingClientRect();
+            if (!viewport) return false;
+            let decoded = 0;
+            for (const card of document.querySelectorAll(".book-card")) {
+              const cover = card.querySelector(".cover");
+              const bounds = cover?.getBoundingClientRect();
+              if (
+                !bounds ||
+                bounds.bottom <= viewport.top ||
+                bounds.top >= viewport.bottom
+              )
+                continue;
+              const expected = titles.includes(
+                card.querySelector(".title")?.textContent ?? "",
+              );
+              const image = cover?.querySelector("img");
+              if (expected) {
+                if (!image?.complete || !image.naturalWidth) return false;
+                decoded++;
+              } else if (image) return false;
+            }
+            return decoded > 0;
+          },
+          plan.filter((book) => book.cover).map((book) => book.title),
+        ),
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+}
+
+/** Scroll rather than click the sentinel: entering its margin can load a
+ * batch and remove the button while Playwright is trying to click it. */
+async function showAllBooks(library: Page, expected: number) {
+  const rows = library.locator(".book-card, .book-list tbody tr");
+  while ((await rows.count()) < expected) {
+    const before = await rows.count();
+    await library.locator(".library-main").evaluate((main) => {
+      main.scrollTop = main.scrollHeight;
+    });
+    await expect.poll(() => rows.count()).toBeGreaterThan(before);
+  }
+  await expect(rows).toHaveCount(expected);
 }
 
 function stored(sql: string, ...values: string[]) {
@@ -483,7 +555,10 @@ test("first-run, warm and evicted-cache launches with a 500-entry catalog", asyn
 
   const profile = await mkdtemp(join(root, "catalog-profile-"));
   await resetAccessTimes(libraryRoot);
+  await resetAccessTimes(libraryRoot, "covers");
   const warm: number[] = [];
+  const warmCovers: number[] = [];
+  const evictedCovers: number[] = [];
   const evicted: number[] = [];
   for (let attempt = 0; attempt < 9; attempt++) {
     const cold = attempt >= 6;
@@ -491,10 +566,14 @@ test("first-run, warm and evicted-cache launches with a 500-entry catalog", asyn
     const started = performance.now();
     const application = await launch(profile, libraryRoot);
     try {
-      await catalogShown(await application.firstWindow(), live);
+      const library = await application.firstWindow();
+      await catalogShown(library, live);
       // The first catalog launch warms caches after seeding; not recorded.
       if (attempt > 0)
         (cold ? evicted : warm).push(performance.now() - started);
+      await coversShown(library);
+      if (attempt > 0)
+        (cold ? evictedCovers : warmCovers).push(performance.now() - started);
     } finally {
       await application.close();
     }
@@ -502,12 +581,18 @@ test("first-run, warm and evicted-cache launches with a 500-entry catalog", asyn
   // Listing the catalog never reads a book file (A13: no eager loading).
   const read = await readSince(libraryRoot);
   expect(read).toEqual([]);
+  const coversRead = await readSince(libraryRoot, "covers");
+  expect(coversRead.length).toBeGreaterThan(0);
+  expect(coversRead.length).toBeLessThan(40);
 
   report.launchMs = {
     firstRunFreshProfile: round(empty[0] ?? 0),
     emptyLibraryWarm: summary(empty.slice(1)),
     catalogWarm: summary(warm),
     catalogEvicted: summary(evicted),
+    catalogWarmWithCovers: summary(warmCovers),
+    catalogEvictedWithCovers: summary(evictedCovers),
+    coverFilesReadByLaunches: coversRead.length,
     bookFilesReadByLaunches: read.length,
     note: `Wall time from launch until the library window shows the locked, validated catalog identity and lists all ${live} unarchived entries of the ${CATALOG_SIZE}-entry catalog (or the empty-library message), including Playwright launch/CDP attach. Eviction uses POSIX_FADV_DONTNEED on artifact/profile/library files; system libraries remain cached.`,
   };
@@ -522,6 +607,183 @@ test("first-run, warm and evicted-cache launches with a 500-entry catalog", asyn
     budgets.catalogEvictedLaunchMaxMs,
     "catalog evicted launch",
   );
+  within(
+    summary(warmCovers).median,
+    budgets.catalogWarmCoversMedianMs,
+    "warm launch with decoded covers",
+  );
+  within(
+    Math.max(...evictedCovers),
+    budgets.catalogEvictedCoversMaxMs,
+    "evicted launch with decoded covers",
+  );
+});
+
+test("cover-bearing grid: bounded decoding, scrolling disposal and compact list", async () => {
+  const profile = await mkdtemp(join(root, "cover-profile-"));
+  const application = await launch(profile, libraryRoot);
+  try {
+    const library = await application.firstWindow();
+    await catalogShown(library, live);
+    await library.setViewportSize({ width: 1000, height: 720 });
+    await coversShown(library);
+    // Observe real blob ownership and image decoding without adding a product
+    // diagnostics API. A short decode delay makes overlapping jobs observable.
+    await library.addInitScript(() => {
+      const urls = new Set<string>();
+      const stats = {
+        created: 0,
+        revoked: 0,
+        live: 0,
+        peakLive: 0,
+        decoding: 0,
+        peakDecoding: 0,
+      };
+      Reflect.set(window, "coverMeasurements", stats);
+      const create = URL.createObjectURL.bind(URL);
+      URL.createObjectURL = (blob) => {
+        const url = create(blob);
+        urls.add(url);
+        stats.created++;
+        stats.live = urls.size;
+        stats.peakLive = Math.max(stats.peakLive, stats.live);
+        return url;
+      };
+      const revoke = URL.revokeObjectURL.bind(URL);
+      URL.revokeObjectURL = (url) => {
+        if (urls.delete(url)) stats.revoked++;
+        stats.live = urls.size;
+        revoke(url);
+      };
+      const decode = HTMLImageElement.prototype.decode;
+      HTMLImageElement.prototype.decode = async function () {
+        stats.decoding++;
+        stats.peakDecoding = Math.max(stats.peakDecoding, stats.decoding);
+        try {
+          await new Promise((done) => setTimeout(done, 25));
+          await decode.call(this);
+        } finally {
+          stats.decoding--;
+        }
+      };
+    });
+    await resetAccessTimes(libraryRoot);
+    await resetAccessTimes(libraryRoot, "covers");
+    await library.reload();
+    await catalogShown(library, live);
+    await coversShown(library);
+    const stats = () =>
+      library.evaluate(
+        () =>
+          Reflect.get(window, "coverMeasurements") as {
+            created: number;
+            revoked: number;
+            live: number;
+            peakLive: number;
+            decoding: number;
+            peakDecoding: number;
+          },
+      );
+    const initial = await stats();
+    expect(initial.live).toBeGreaterThan(0);
+    expect((await readSince(libraryRoot, "covers")).length).toBeLessThan(40);
+    const first = library
+      .locator(".book-card")
+      .filter({ has: library.locator(".cover img") })
+      .first();
+    const firstTitle = await first.locator(".title").textContent();
+    const firstCard = library
+      .locator(".book-card")
+      .filter({ has: library.getByText(firstTitle ?? "", { exact: true }) });
+
+    const started = performance.now();
+    await showAllBooks(library, live);
+    const allBatchesMs = performance.now() - started;
+    await expect(library.locator(".book-card")).toHaveCount(live);
+    await expect(firstCard.locator("img")).toHaveCount(0);
+    // Traverse every row (including the auto-loaded batches). Each step waits
+    // for visible images, so skipping or never decoding covers cannot pass.
+    const browse = async () => {
+      await library.locator(".library-main").evaluate((main) => {
+        main.scrollTop = 0;
+      });
+      for (;;) {
+        await coversShown(library);
+        const atEnd = await library
+          .locator(".library-main")
+          .evaluate((main) => {
+            if (main.scrollTop + main.clientHeight >= main.scrollHeight - 1)
+              return true;
+            main.scrollTop += main.clientHeight - 100;
+            return false;
+          });
+        if (atEnd) break;
+      }
+    };
+    await browse();
+    await expect.poll(async () => (await stats()).decoding).toBe(0);
+    const coverFilesRead = await readSince(libraryRoot, "covers");
+    const expectedPaths = plan
+      .filter((book) => book.cover && !book.archived)
+      .map((book) => entries.get(book.title)?.coverPath)
+      .sort();
+    expect(coverFilesRead).toEqual(expectedPaths);
+    const browsed = await stats();
+    expect(browsed.peakDecoding).toBeGreaterThan(1);
+    expect(browsed.peakDecoding).toBeLessThanOrEqual(4);
+    expect(browsed.peakLive).toBeLessThan(40);
+    expect(browsed.revoked).toBeGreaterThan(0);
+    await firstCard.scrollIntoViewIfNeeded();
+    await coversShown(library);
+    await expect(firstCard.locator("img")).toBeVisible();
+    await settle();
+    const gridMemory = await memory(application);
+    const renderer = await libraryRenderer(library);
+    await browse();
+    await firstCard.scrollIntoViewIfNeeded();
+    await coversShown(library);
+    await settle();
+    const secondBrowseMemory = await memory(application);
+    await library.screenshot({ path: "test-results/measure-covers.png" });
+    // List mode owns no images and must not touch cover files, including when
+    // all 429 results are requested or the list is scrolled.
+    await library.getByRole("button", { name: "List", exact: true }).click();
+    await expect.poll(async () => (await stats()).live).toBe(0);
+    await resetAccessTimes(libraryRoot, "covers");
+    await showAllBooks(library, live);
+    await library.locator(".library-main").evaluate((main) => {
+      main.scrollTop = main.scrollHeight;
+    });
+    await settle();
+    const listMemory = await memory(application);
+    expect(await readSince(libraryRoot, "covers")).toEqual([]);
+    expect((await stats()).created).toBe((await stats()).revoked);
+    await library.getByRole("button", { name: "Grid", exact: true }).click();
+    await library.locator(".library-main").evaluate((main) => {
+      main.scrollTop = 0;
+    });
+    await coversShown(library);
+    expect(await readSince(libraryRoot)).toEqual([]);
+    report.covers = {
+      initial,
+      browsed,
+      afterReturningToGrid: await stats(),
+      coverFilesRead: coverFilesRead.length,
+      allBatchesMs: round(allBatchesMs),
+      gridMemory,
+      secondBrowseMemory,
+      listMemory,
+      renderer,
+      note: "Distinct generated PNGs, fixed 1000×720 viewport. Blob/decode instrumentation adds a 25 ms decode delay to expose concurrency; launch and reader timings are uninstrumented. Full-grid PSS includes rendering caches; a second traversal and list-mode sample show their retention.",
+    };
+    within(
+      Math.max(gridMemory.totalPssMiB, secondBrowseMemory.totalPssMiB),
+      budgets.libraryBrowsedPssMiB,
+      "browsed cover grid PSS",
+    );
+  } finally {
+    await application.close();
+  }
 });
 
 test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, memory and disposal", async () => {
@@ -552,6 +814,7 @@ test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, 
     };
     const library = await application.firstWindow();
     await catalogShown(library, live);
+    await coversShown(library);
     // Idle is sampled after browsing, so the library renderer's own query
     // garbage is not later attributed to the readers.
     const queriesIdle = await timeQueries(library, 20);
@@ -723,8 +986,7 @@ test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, 
     await library.getByRole("searchbox").fill("");
     await expect(library.locator(".result-count")).toHaveText(`${live} books`);
     const browseStarted = performance.now();
-    const more = library.getByRole("button", { name: /^Show more books/ });
-    while (await more.isVisible()) await more.click();
+    await showAllBooks(library, live);
     await expect(
       library.getByRole("list", { name: "Books" }).getByRole("listitem"),
     ).toHaveCount(live);
@@ -740,7 +1002,7 @@ test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, 
 
     report.libraryBrowseMs = {
       allBatches: round(browseMs),
-      note: `Showing all ${live} entries in batches of ${RESULT_BATCH} by pressing Show more.`,
+      note: `Showing all ${live} entries in batches of ${RESULT_BATCH} by scrolling.`,
     };
     report.catalogQueriesMs = {
       libraryIdle: queriesIdle,

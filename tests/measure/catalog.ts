@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { archiveBook, editMetadata } from "../../src/library/books.ts";
+import { setManualCover } from "../../src/library/covers.ts";
 import { addFileAsNewBook } from "../../src/library/import.ts";
 import {
   addBooksToSection,
@@ -18,6 +19,7 @@ import {
 import { openLibrary } from "../../src/storage/catalog.ts";
 import {
   type RepresentativeDocument,
+  representativeCover,
   representativeEpub,
   representativePdf,
 } from "./representative.ts";
@@ -160,6 +162,7 @@ export interface PlannedBook {
   subjects: string[];
   sections: number[];
   archived: boolean;
+  cover: boolean;
 }
 
 export const plan: PlannedBook[] = Array.from(
@@ -207,6 +210,7 @@ export const plan: PlannedBook[] = Array.from(
       subjects,
       sections,
       archived: i >= 2 && i % 7 === 6,
+      cover: i % 5 !== 4,
     };
   },
 );
@@ -295,6 +299,17 @@ export async function buildCatalog(root: string): Promise<number> {
           authors: book.authors,
           subjects: book.subjects,
         });
+        if (book.cover) {
+          const cover = join(sources, `cover-${book.index}.png`);
+          await writeFile(cover, representativeCover(book.index));
+          await setManualCover(library, added.bookId, cover, {
+            // Generated PNGs already fit the thumbnail contract. Native
+            // source-image normalization is covered by the cover smoke case;
+            // this seeds via the real publication/recovery protocol.
+            normalize: (bytes) => bytes,
+          });
+          await rm(cover);
+        }
       }
     };
     await Promise.all(Array.from({ length: 4 }, importer));
@@ -327,6 +342,7 @@ export interface CatalogEntry {
   /** Managed file, relative to the root. */
   path: string;
   size: number;
+  coverPath: string | null;
 }
 
 /** The built catalog's entries by title, read directly from its database. */
@@ -338,7 +354,8 @@ export function catalogEntries(root: string): Map<string, CatalogEntry> {
     const entries = new Map<string, CatalogEntry>();
     for (const row of database
       .prepare(
-        `SELECT b.id AS id, b.title AS title, r.path AS path, r.size AS size
+        `SELECT b.id AS id, b.title AS title, r.path AS path, r.size AS size,
+         b.cover_path AS coverPath
          FROM books b JOIN revisions r ON r.id = b.current_revision_id`,
       )
       .all())
@@ -346,6 +363,7 @@ export function catalogEntries(root: string): Map<string, CatalogEntry> {
         id: String(row.id),
         path: String(row.path),
         size: Number(row.size),
+        coverPath: row.coverPath === null ? null : String(row.coverPath),
       });
     if (entries.size !== plan.length)
       throw new Error(`Expected ${plan.length} books, found ${entries.size}`);
@@ -362,8 +380,11 @@ const UNREAD_ATIME = new Date("2001-01-01T00:00:00Z");
  * With `relatime`, the kernel then advances the access time on the next read,
  * so `readSince` reports exactly which book files were read.
  */
-export async function resetAccessTimes(root: string): Promise<void> {
-  const directory = join(root, "files");
+export async function resetAccessTimes(
+  root: string,
+  assets: "files" | "covers" = "files",
+): Promise<void> {
+  const directory = join(root, assets);
   for (const name of await readdir(directory)) {
     const path = join(directory, name);
     await utimes(path, UNREAD_ATIME, (await stat(path)).mtime);
@@ -371,11 +392,14 @@ export async function resetAccessTimes(root: string): Promise<void> {
 }
 
 /** Managed files (root-relative) read since `resetAccessTimes`. */
-export async function readSince(root: string): Promise<string[]> {
-  const directory = join(root, "files");
+export async function readSince(
+  root: string,
+  assets: "files" | "covers" = "files",
+): Promise<string[]> {
+  const directory = join(root, assets);
   const read: string[] = [];
   for (const name of await readdir(directory))
     if ((await stat(join(directory, name))).atimeMs > UNREAD_ATIME.getTime())
-      read.push(`files/${name}`);
+      read.push(`${assets}/${name}`);
   return read.sort();
 }
