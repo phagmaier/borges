@@ -209,7 +209,11 @@ export async function rollBackOperation(
   const candidates = [record.stagedPath, record.publishedPath].filter(
     (path): path is string => path !== null,
   );
-  if (record.kind !== "import" && record.kind !== "cover") {
+  if (
+    record.kind !== "import" &&
+    record.kind !== "cover" &&
+    record.kind !== "replace"
+  ) {
     return retain(
       `this build cannot reconcile ${record.kind} operations`,
       candidates,
@@ -224,6 +228,21 @@ export async function rollBackOperation(
   )
     return retain(
       "its paths do not belong to this cover operation",
+      candidates,
+      [],
+    );
+  if (
+    record.kind === "replace" &&
+    (record.stagedPath !== `staging/${record.id}.partial` ||
+      !record.revisionId ||
+      (record.publishedPath !== null &&
+        !["pdf", "epub"].some(
+          (format) =>
+            record.publishedPath === `files/${record.revisionId}.${format}`,
+        )))
+  )
+    return retain(
+      "its paths do not belong to this replacement operation",
       candidates,
       [],
     );
@@ -274,7 +293,7 @@ export async function rollBackOperation(
   }
   const text = `${operationLabel(record)} was ${reason} and has been rolled back${
     removed.length ? ` (removed ${removed.join(", ")})` : ""
-  }. The source file was not changed; ${record.kind === "cover" ? "choose the cover again" : "import it again"} if needed.`;
+  }. The source file was not changed; ${record.kind === "cover" ? "choose the cover again" : record.kind === "replace" ? "choose Replace File again" : "import it again"} if needed.`;
   immediate(database, () =>
     setOperationState(
       database,
@@ -310,6 +329,14 @@ function referencedByCatalog(
         ),
     );
   }
+  if (record.kind === "replace")
+    return Boolean(
+      database
+        .prepare(
+          "SELECT 1 FROM revisions WHERE id = ? OR path IN (?, ?) LIMIT 1",
+        )
+        .get(record.revisionId, record.stagedPath, record.publishedPath),
+    );
   return Boolean(
     database
       .prepare(

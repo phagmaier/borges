@@ -5,6 +5,7 @@ import type {
   SectionNode,
 } from "../../../shared/runtime";
 import { MetadataDialog } from "./MetadataDialog";
+import { ReplaceFileDialog } from "./ReplaceFileDialog";
 import { flattenSections } from "./views";
 
 type StatusAction = "finish" | "archive" | "unarchive" | "startRereading";
@@ -38,6 +39,8 @@ export function SelectionBar({
   const [target, setTarget] = useState("");
   const [editing, setEditing] = useState<BookSummary | null>(null);
   const [coverBusy, setCoverBusy] = useState(false);
+  const [replacing, setReplacing] = useState<BookSummary | null>(null);
+  const [replaceBusy, setReplaceBusy] = useState(false);
   const confirm = useRef<HTMLDialogElement>(null);
   const ids = useId();
   const books = (n: number) => `${n} ${n === 1 ? "book" : "books"}`;
@@ -73,6 +76,26 @@ export function SelectionBar({
       onMessage(String(error), true);
     } finally {
       setCoverBusy(false);
+    }
+  }
+
+  async function replaceFile(book: BookSummary) {
+    setReplacing(null);
+    setReplaceBusy(true);
+    onMessage(`Preparing replacement for ${book.title}…`, false);
+    try {
+      const result = await window.borges.library.replaceFile(book.id);
+      if (!result.ok) onMessage(result.message, true);
+      else if (!result.value) onMessage("Replacement cancelled.", false);
+      else
+        onMessage(
+          `Replaced file for ${result.value.book.title}. Previous file and position kept in Trash.${result.value.warnings.length ? ` Warning: ${result.value.warnings.join(" ")}` : ""}`,
+          false,
+        );
+    } catch (error) {
+      onMessage(String(error), true);
+    } finally {
+      setReplaceBusy(false);
     }
   }
 
@@ -159,6 +182,13 @@ export function SelectionBar({
           </button>
           <button
             type="button"
+            disabled={replaceBusy}
+            onClick={() => setReplacing(selected[0] ?? null)}
+          >
+            {replaceBusy ? "Replacing file…" : "Replace File…"}
+          </button>
+          <button
+            type="button"
             disabled={coverBusy}
             onClick={() => selected[0] && void chooseCover(selected[0])}
           >
@@ -225,6 +255,13 @@ export function SelectionBar({
             setEditing(null);
             onMessage(`Saved details for ${book.title}.`, false);
           }}
+        />
+      ) : null}
+      {replacing ? (
+        <ReplaceFileDialog
+          book={replacing}
+          onClose={() => setReplacing(null)}
+          onReplace={() => void replaceFile(replacing)}
         />
       ) : null}
     </section>

@@ -74,6 +74,18 @@ export class WindowCoordinator {
     return this.contentsOf(`catalog:${bookId}`);
   }
 
+  /** Reload the existing shell after its session was retired. */
+  async reloadCatalogReader(book: {
+    id: string;
+    title: string;
+  }): Promise<void> {
+    const entry = this.entries.get(`catalog:${book.id}`);
+    if (!entry || entry.window.isDestroyed()) return;
+    entry.identity = { kind: "reader", book: { ...book, source: "catalog" } };
+    entry.window.setTitle(`${book.title} — reader shell`);
+    await entry.window.webContents.loadURL(this.shellUrl);
+  }
+
   /** The open library window's contents, if any. */
   library(): WebContents | undefined {
     return this.contentsOf("library");

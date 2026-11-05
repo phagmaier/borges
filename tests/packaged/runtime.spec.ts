@@ -425,7 +425,7 @@ for (const from of [1, 2]) {
   });
 }
 
-test("packaged readers open a catalog book, save its position and resume it", async () => {
+test("packaged readers save/resume, replace across formats and retain the old position", async () => {
   const sources = await mkdtemp(join(root, "sources-"));
   const source = join(sources, "Known PDF.pdf");
   await cp(resolve("tests/fixtures/known.pdf"), source);
@@ -479,6 +479,58 @@ test("packaged readers open a catalog book, save its position and resume it", as
   try {
     const { ui } = await read(application);
     await expect(ui.getByTestId("page-text")).toContainText("CEDAR SECOND");
+    const library = await application.firstWindow();
+    await application.evaluate(({ dialog }, path) => {
+      dialog.showOpenDialog = (async () => ({
+        canceled: false,
+        filePaths: [path],
+      })) as typeof dialog.showOpenDialog;
+    }, resolve("tests/fixtures/import-metadata.epub"));
+    const result = await library.evaluate(
+      (id) => window.borges.library.replaceFile(id),
+      bookId,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        book: { id: bookId, title: "Garden Stories", format: "epub" },
+        warnings: [],
+      },
+    });
+    await expect(ui.getByTestId("visible-text")).toContainText(
+      "ORCHID EPUB FIRST",
+    );
+    const database = new DatabaseSync(
+      join(libraryFor(profile), "catalog.sqlite"),
+      { readOnly: true },
+    );
+    try {
+      expect(
+        database
+          .prepare(
+            `SELECT p.pdf_page FROM trash_entries t JOIN positions p ON p.revision_id = t.revision_id WHERE t.book_id = ?`,
+          )
+          .get(bookId),
+      ).toEqual({ pdf_page: 2 });
+    } finally {
+      database.close();
+    }
+  } finally {
+    await application.close();
+  }
+  application = await launch(profile);
+  try {
+    const library = await application.firstWindow();
+    const opened = application.waitForEvent("window");
+    await library
+      .getByRole("button", { name: "Garden Stories", exact: true })
+      .click();
+    const reader = await opened;
+    await expect(
+      reader
+        .frameLocator('iframe[title="Book content"]')
+        .getByTestId("visible-text"),
+    ).toContainText("ORCHID EPUB FIRST");
   } finally {
     await application.close();
   }

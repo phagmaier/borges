@@ -14,6 +14,7 @@ import {
 } from "../library/books.ts";
 import { readCover, setManualCover } from "../library/covers.ts";
 import type { InspectBook } from "../library/extraction.ts";
+import { replaceBookFile } from "../library/import.ts";
 import { countOutcomes, importBatch } from "../library/import-batch.ts";
 import {
   getBook,
@@ -143,11 +144,98 @@ export function registerLibraryIpc({
   // One import batch at a time, tied to the library page that started it:
   // closing or reloading that page cancels the batch (completed books stay).
   let importing: AbortController | null = null;
+  let replacing = false;
+  handle("replace-file", async (bookId) => {
+    const book = getBook(database, bookId as string);
+    if (replacing || importing)
+      throw new LibraryError(
+        "invalid",
+        "Another import or replacement is running.",
+      );
+    const expectedRevisionId = String(
+      database
+        .prepare("SELECT current_revision_id FROM books WHERE id = ?")
+        .get(book.id)?.current_revision_id,
+    );
+    const contents = windows.library();
+    const parent = contents && BrowserWindow.fromWebContents(contents);
+    if (!contents || !parent) throw new Error("The library window is closed.");
+    replacing = true;
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    const navigating = (details: {
+      isMainFrame: boolean;
+      isSameDocument: boolean;
+    }) => {
+      if (details.isMainFrame && !details.isSameDocument) stop();
+    };
+    contents.once("destroyed", stop);
+    contents.on("did-start-navigation", navigating);
+    let quiesced = false;
+    let result:
+      | { book: ReturnType<typeof getBook>; warnings: string[] }
+      | undefined;
+    try {
+      const choice = await dialog.showOpenDialog(parent, {
+        title: `Replace file for ${book.title}`,
+        properties: ["openFile"],
+        filters: [
+          {
+            name: "Books (PDF, EPUB)",
+            extensions: ["pdf", "epub", "PDF", "EPUB"],
+          },
+        ],
+      });
+      if (choice.canceled || !choice.filePaths[0] || controller.signal.aborted)
+        return null;
+      const replaced = await replaceBookFile(
+        { root, database },
+        book.id,
+        choice.filePaths[0],
+        {
+          inspect: inspectBook,
+          expectedRevisionId,
+          signal: controller.signal,
+          beforeCommit() {
+            const reader = windows.catalogReader(book.id);
+            if (reader) {
+              readers.quiesce(reader.id);
+              quiesced = true;
+            }
+          },
+        },
+      );
+      result = {
+        book: getBook(database, book.id),
+        warnings: replaced.warnings,
+      };
+      changed();
+      return result;
+    } finally {
+      if (quiesced) {
+        try {
+          await windows.reloadCatalogReader(getBook(database, book.id));
+        } catch (error) {
+          const message = `The reader could not reload (${error instanceof Error ? error.message : String(error)}). Close the reader and reopen the book from the library.`;
+          if (result) result.warnings.push(message);
+          else console.error(message);
+        }
+      }
+      replacing = false;
+      if (!contents.isDestroyed()) {
+        contents.off("destroyed", stop);
+        contents.off("did-start-navigation", navigating);
+      }
+    }
+  });
   handle("import", async (kind, sectionId) => {
     if (kind !== "files" && kind !== "folders")
       throw new LibraryError("invalid", "Choose files or folders to import.");
-    if (importing)
-      throw new LibraryError("invalid", "An import is already running.");
+    if (importing || replacing)
+      throw new LibraryError(
+        "invalid",
+        "Another import or replacement is running.",
+      );
     // importBatch validates the section again after the dialog.
     if (
       sectionId != null &&

@@ -166,6 +166,20 @@ export class ReaderSessions {
     this.commit(owner);
   }
 
+  /** Replacement must save and retire successfully before switching bytes.
+   * On failure keep the session (and pending write) so the reader can retry. */
+  quiesce(owner: number): void {
+    const session = this.sessions.get(owner);
+    if (!session) return;
+    this.commit(owner, true);
+    if (!endReaderSession(this.database, session.bookId, session.generation))
+      throw new ProgressError(
+        "stale-session",
+        "The reader session changed before replacement. Try again.",
+      );
+    this.sessions.delete(owner);
+  }
+
   /**
    * Flush, then retire the owner's session so no later message from it can
    * write. Never throws: closing a window must not be blocked by storage.
@@ -190,7 +204,7 @@ export class ReaderSessions {
     for (const owner of [...this.sessions.keys()]) this.end(owner);
   }
 
-  private commit(owner: number): void {
+  private commit(owner: number, strict = false): void {
     const session = this.sessions.get(owner);
     if (!session) return;
     if (session.timer) clearTimeout(session.timer);
@@ -210,6 +224,7 @@ export class ReaderSessions {
       // A rejected write never landed, so it does not raise the floor.
       else session.accepted = session.committed;
       this.notify(owner, failure(error, write));
+      if (strict) throw error;
     }
   }
 }

@@ -62,6 +62,44 @@ const codes = () =>
   results.map(({ owner, result }) => [owner, result.ok ? "ok" : result.code]);
 
 describe("coalescing", () => {
+  it("keeps the reader assigned if durable session retirement fails", () => {
+    const grant = sessions.begin(A, "a");
+    database.exec(`CREATE TEMP TRIGGER fail_retirement BEFORE UPDATE OF session_generation ON books
+      BEGIN SELECT RAISE(ABORT, 'catalog full'); END`);
+    expect(() => sessions.quiesce(A)).toThrow(/catalog full/);
+    expect(sessions.sessionOf(A)).toEqual({
+      bookId: "a",
+      generation: grant.generation,
+    });
+    database.exec("DROP TRIGGER fail_retirement");
+    sessions.quiesce(A);
+    expect(sessions.sessionOf(A)).toBeNull();
+  });
+
+  it("refuses replacement when flushing fails, retains the session for retry, then retires it", () => {
+    const grant = sessions.begin(A, "a");
+    sessions.report(A, report(grant, 1, 3));
+    database.exec(`CREATE TEMP TRIGGER fail_positions BEFORE INSERT ON positions
+      BEGIN SELECT RAISE(ABORT, 'disk full'); END`);
+    expect(() => sessions.quiesce(A)).toThrow(/could not be saved/);
+    expect(sessions.sessionOf(A)).toEqual({
+      bookId: "a",
+      generation: grant.generation,
+    });
+    expect(storedPage("a-1")).toBeNull();
+    database.exec("DROP TRIGGER fail_positions");
+    sessions.quiesce(A);
+    expect(storedPage("a-1")).toEqual({ pdf_page: 3, sequence: 1 });
+    expect(sessions.sessionOf(A)).toBeNull();
+    sessions.report(A, report(grant, 2, 10));
+    expect(storedPage("a-1")).toEqual({ pdf_page: 3, sequence: 1 });
+    expect(codes()).toEqual([
+      [A, "storage-failed"],
+      [A, "ok"],
+      [A, "not-assigned"],
+    ]);
+  });
+
   it("commits only the latest position per interval and acknowledges it", () => {
     const grant = sessions.begin(A, "a");
     for (const [sequence, page] of [

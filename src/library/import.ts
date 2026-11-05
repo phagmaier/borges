@@ -24,13 +24,19 @@ import {
   sniffFormat,
   titleFromName,
 } from "./formats.ts";
+import { getBook } from "./query.ts";
 import {
   type LibraryHandle,
   readOperation,
   rollBackOperation,
   setOperationState,
 } from "./recovery.ts";
-import { foldKey } from "./rules.ts";
+import {
+  checkReplacementTarget,
+  commitReplacement,
+  type ReplacementTarget,
+} from "./replacement.ts";
+import { foldKey, requireId } from "./rules.ts";
 
 // "Add file as new book" on top of the operation protocol (see recovery.ts
 // for the states). Byte-identical live content is skipped, the book can join
@@ -130,6 +136,43 @@ export async function addFileAsNewBook(
   sourcePath: string,
   options: AddBookOptions = {},
 ): Promise<AddedBook> {
+  return publishBookFile(library, sourcePath, options);
+}
+
+export interface ReplaceBookOptions extends Omit<AddBookOptions, "sectionId"> {
+  /** Recheck the revision selected before the file chooser, if supplied. */
+  expectedRevisionId?: string;
+  beforeCommit?: () => void;
+}
+
+/** Publish a new immutable revision; preserve the target book and old location. */
+export async function replaceBookFile(
+  library: LibraryHandle,
+  bookId: unknown,
+  sourcePath: string,
+  options: ReplaceBookOptions = {},
+): Promise<AddedBook> {
+  const id = requireId(bookId, "book");
+  getBook(library.database, id);
+  const current = library.database
+    .prepare("SELECT current_revision_id FROM books WHERE id = ?")
+    .get(id);
+  const target: ReplacementTarget = {
+    bookId: id,
+    revisionId:
+      options.expectedRevisionId ?? String(current?.current_revision_id),
+    beforeCommit: options.beforeCommit,
+  };
+  checkReplacementTarget(library.database, target);
+  return publishBookFile(library, sourcePath, options, target);
+}
+
+async function publishBookFile(
+  library: LibraryHandle,
+  sourcePath: string,
+  options: AddBookOptions,
+  target?: ReplacementTarget,
+): Promise<AddedBook> {
   const now = options.now ?? Date.now;
   const sourceName = basename(sourcePath);
   const { signal } = options;
@@ -157,7 +200,7 @@ export async function addFileAsNewBook(
   const source = await openSource(sourcePath, sourceName);
 
   const operationId = randomUUID();
-  const bookId = randomUUID();
+  const bookId = target?.bookId ?? randomUUID();
   const revisionId = randomUUID();
   const stagedPath = `staging/${operationId}.partial`;
   const publishedPath = `files/${revisionId}.${claimed}`;
@@ -175,10 +218,11 @@ export async function addFileAsNewBook(
         .prepare(
           `INSERT INTO recovery_operations (id, kind, state, book_id,
              revision_id, staged_path, detail, created_at, updated_at)
-           VALUES (?, 'import', 'pending', ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           operationId,
+          target ? "replace" : "import",
           bookId,
           revisionId,
           stagedPath,
@@ -230,6 +274,7 @@ export async function addFileAsNewBook(
       library,
       digest,
       resolveLibraryPath(root, stagedPath),
+      target?.bookId,
     );
     if (existing) throw duplicateOf(sourceName, existing);
     if (options.inspect) {
@@ -293,17 +338,22 @@ export async function addFileAsNewBook(
     );
     checkpoint("published");
     let joinedSection = false;
+    if (target) {
+      checkReplacementTarget(database, target);
+      target.beforeCommit?.();
+    }
     immediate(database, () => {
       const at = now();
       // Recheck against the committed catalog: content that became live
       // since the comparison above is still a duplicate.
-      const existing = liveBooksWithDigest(database, digest)[0];
+      const existing = liveBooksWithDigest(database, digest, target?.bookId)[0];
       if (existing) throw duplicateOf(sourceName, existing);
-      database
-        .prepare(
-          "INSERT INTO books (id, current_revision_id, title, cover_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .run(bookId, revisionId, title, coverPath, at, at);
+      if (!target)
+        database
+          .prepare(
+            "INSERT INTO books (id, current_revision_id, title, cover_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+          )
+          .run(bookId, revisionId, title, coverPath, at, at);
       database
         .prepare(
           `INSERT INTO revisions (id, book_id, format, path, sha256, size,
@@ -325,20 +375,36 @@ export async function addFileAsNewBook(
           coverPath,
           at,
         );
-      const authorInsert = database.prepare(
-        "INSERT INTO book_authors (book_id, position, name) VALUES (?, ?, ?)",
-      );
-      authors.forEach((name, position) => {
-        authorInsert.run(bookId, position, name);
-      });
-      const subjectInsert = database.prepare(
-        "INSERT INTO book_subjects (book_id, label, label_key) VALUES (?, ?, ?)",
-      );
-      for (const label of subjects)
-        subjectInsert.run(bookId, label, foldKey(label));
+      if (target) {
+        title = commitReplacement(
+          database,
+          target,
+          {
+            revisionId,
+            format: claimed,
+            title: extractedTitle,
+            authors,
+            subjects,
+            coverPath,
+          },
+          at,
+        );
+      } else {
+        const authorInsert = database.prepare(
+          "INSERT INTO book_authors (book_id, position, name) VALUES (?, ?, ?)",
+        );
+        authors.forEach((name, position) => {
+          authorInsert.run(bookId, position, name);
+        });
+        const subjectInsert = database.prepare(
+          "INSERT INTO book_subjects (book_id, label, label_key) VALUES (?, ?, ?)",
+        );
+        for (const label of subjects)
+          subjectInsert.run(bookId, label, foldKey(label));
+      }
       if (coverPath)
         setOperationState(database, coverOperationId, "committed", {}, at);
-      if (options.sectionId) {
+      if (!target && options.sectionId) {
         joinedSection =
           database
             .prepare(
@@ -375,6 +441,12 @@ export async function addFileAsNewBook(
           : storageError(error, sourceName);
     await rollBackAfterFailure(library, coverOperationId, failure, now);
     await rollBackAfterFailure(library, operationId, failure, now);
+    if (target)
+      throw new ImportError(
+        failure.code,
+        `${sourceName} could not replace the file (${message(error)}). The previous revision remains current.`,
+        { cause: error, existing: failure.existing },
+      );
     throw failure;
   }
 }
@@ -387,15 +459,16 @@ interface LiveCandidate extends ExistingBook {
 function liveBooksWithDigest(
   database: DatabaseSync,
   digest: FileDigest,
+  exceptBookId?: string,
 ): LiveCandidate[] {
   return database
     .prepare(
       `SELECT b.id, b.title, b.archived_at, r.path FROM revisions r
        JOIN books b ON b.current_revision_id = r.id
-       WHERE r.sha256 = ? AND r.size = ? AND b.deleted_at IS NULL
+       WHERE r.sha256 = ? AND r.size = ? AND b.deleted_at IS NULL AND b.id <> ?
        ORDER BY b.created_at, b.id`,
     )
-    .all(digest.sha256, digest.size)
+    .all(digest.sha256, digest.size, exceptBookId ?? "")
     .map((row) => ({
       bookId: String(row.id),
       title: String(row.title),
@@ -413,8 +486,13 @@ async function identicalLiveBook(
   library: LibraryHandle,
   digest: FileDigest,
   staged: string,
+  exceptBookId?: string,
 ): Promise<ExistingBook | null> {
-  for (const candidate of liveBooksWithDigest(library.database, digest)) {
+  for (const candidate of liveBooksWithDigest(
+    library.database,
+    digest,
+    exceptBookId,
+  )) {
     let same = true;
     try {
       same = await sameContents(

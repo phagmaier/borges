@@ -149,6 +149,10 @@ export interface BorgesApi {
     ): Promise<LibraryResult<BookSummary>>;
     /** Open main's local image chooser. Null means cancelled. */
     chooseCover(bookId: string): Promise<LibraryResult<BookSummary | null>>;
+    /** Choose validated replacement bytes; old revision/location stay in Trash. */
+    replaceFile(
+      bookId: string,
+    ): Promise<LibraryResult<{ book: BookSummary; warnings: string[] } | null>>;
     /** Only the current approved cover, requested lazily by visible cards. */
     cover(
       bookId: string,

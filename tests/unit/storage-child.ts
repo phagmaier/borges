@@ -1,7 +1,11 @@
 // Real child process for lock and crash tests; run directly by Node.
 import { mkdirSync, readFileSync } from "node:fs";
 import { setManualCover } from "../../src/library/covers.ts";
-import { addFileAsNewBook, type ImportStep } from "../../src/library/import.ts";
+import {
+  addFileAsNewBook,
+  type ImportStep,
+  replaceBookFile,
+} from "../../src/library/import.ts";
 import {
   beginReaderSession,
   saveProgress,
@@ -83,6 +87,27 @@ if (mode === "hold-lock") {
       subjects: [],
       warnings: [],
       cover: readFileSync(cover),
+    }),
+    checkpoint(reached) {
+      if (reached !== step) return;
+      console.log(`at ${step}`);
+      block();
+    },
+  });
+  throw new Error(`never reached ${step}`);
+} else if (mode === "replace-and-stop") {
+  const [source, step, bookId] = extra as [string, ImportStep, string];
+  const library = openLibrary({ root });
+  await replaceBookFile(library, bookId, source, {
+    inspect: async () => ({
+      title: "Fresh title",
+      authors: ["Ana"],
+      subjects: [],
+      warnings: [],
+      cover: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX9sAAAAASUVORK5CYII=",
+        "base64",
+      ),
     }),
     checkpoint(reached) {
       if (reached !== step) return;

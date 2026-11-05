@@ -47,6 +47,7 @@ const borges: BorgesApi = {
     editMetadata: (bookId, edit) =>
       ipcRenderer.invoke("library:edit-metadata", bookId, edit),
     chooseCover: (bookId) => ipcRenderer.invoke("library:choose-cover", bookId),
+    replaceFile: (bookId) => ipcRenderer.invoke("library:replace-file", bookId),
     cover: (bookId, token) =>
       ipcRenderer.invoke("library:cover", bookId, token),
     importBooks: (kind, sectionId) =>
