@@ -213,7 +213,7 @@ test("relocated runtime keeps one catalog across restarts and a moved root", asy
       } else {
         const chapter = reader
           .frames()
-          .find((frame) => frame.url().startsWith("blob:borges://reader/"));
+          .find((frame) => frame.url().startsWith("blob:borges://reader-"));
         if (!chapter) throw new Error("Missing packaged EPUB chapter");
         await expect(chapter.locator("body")).toContainText(
           "ORCHID EPUB FIRST",

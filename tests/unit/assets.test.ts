@@ -39,24 +39,31 @@ describe("application resource boundary", () => {
 describe("reader origin resource boundary", () => {
   it.each([
     [
-      "borges://reader/content.html?book=sample-pdf",
+      "borges://reader-fixture-sample-pdf.reader/content.html?book=sample-pdf",
       "/build/renderer/content.html",
     ],
-    ["borges://reader/assets/content.js", "/build/renderer/assets/content.js"],
     [
-      "borges://reader/reader-assets/fixtures/known.pdf",
+      "borges://reader-fixture-sample-pdf.reader/assets/content.js",
+      "/build/renderer/assets/content.js",
+    ],
+    [
+      "borges://reader-fixture-sample-pdf.reader/reader-assets/fixtures/known.pdf",
       "/build/renderer/reader-assets/fixtures/known.pdf",
     ],
   ])("serves bundled reader assets: %s", (url, expected) => {
     expect(resolveReaderAsset(url, "/build/renderer")).toBe(expected);
   });
   it.each([
-    "borges://reader/index.html",
+    "borges://reader/content.html",
+    "borges://reader-fixture-sample-pdf.reader.evil/content.html",
+    "borges://nested.reader-fixture-sample-pdf.reader/content.html",
+    "borges://reader-unknown-id.reader/content.html",
+    "borges://reader-fixture-sample-pdf.reader/index.html",
     "borges://app/content.html",
-    "borges://reader:9000/content.html",
-    "borges://reader/reader-assets/..%2f..%2f..%2fetc/passwd",
-    "borges://reader/assets/%00x",
-    "borges://user@reader/content.html",
+    "borges://reader-fixture-sample-pdf.reader:9000/content.html",
+    "borges://reader-fixture-sample-pdf.reader/reader-assets/..%2f..%2f..%2fetc/passwd",
+    "borges://reader-fixture-sample-pdf.reader/assets/%00x",
+    "borges://user@reader-fixture-sample-pdf.reader/content.html",
     "file:///etc/passwd",
   ])("rejects unauthorized reader assets: %s", (url) => {
     expect(resolveReaderAsset(url, "/build/renderer")).toBeNull();
@@ -64,8 +71,8 @@ describe("reader origin resource boundary", () => {
 });
 
 it.each([
-  "borges://reader/assets/..%2findex.html",
-  "borges://reader/reader-assets/%2e%2e%2findex.html",
+  "borges://reader-fixture-sample-pdf.reader/assets/..%2findex.html",
+  "borges://reader-fixture-sample-pdf.reader/reader-assets/%2e%2e%2findex.html",
 ])("does not decode a reader path into the privileged shell: %s", (url) => {
   expect(resolveReaderAsset(url, "/build/renderer")).toBeNull();
 });
@@ -85,7 +92,7 @@ it("serves approved real files and denies file/directory symlink escapes", async
       join(root, "assets", "local.css"),
       join(root, "assets", "alias.css"),
     );
-    for (const origin of ["app", "reader"]) {
+    for (const origin of ["app", "reader-fixture-sample-pdf.reader"]) {
       expect(
         await resolveServedAsset(`borges://${origin}/assets/local.css`, root),
       ).toBe(join(root, "assets", "local.css"));
@@ -99,7 +106,10 @@ it("serves approved real files and denies file/directory symlink escapes", async
       }
     }
     expect(
-      await resolveServedAsset("borges://reader/assets/shell", root),
+      await resolveServedAsset(
+        "borges://reader-fixture-sample-pdf.reader/assets/shell",
+        root,
+      ),
     ).toBeNull();
   } finally {
     await rm(temporary, { recursive: true, force: true });

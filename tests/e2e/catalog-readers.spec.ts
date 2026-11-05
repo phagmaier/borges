@@ -268,10 +268,10 @@ test("forged, stale, replayed and malformed progress writes are rejected end to 
   // posted by a chapter document instead of its assigned engine.
   const chapter = epubReader.reader
     .frames()
-    .find((frame) => frame.url().startsWith("blob:borges://reader/"));
+    .find((frame) => frame.url().startsWith("blob:borges://reader-"));
   const engine = epubReader.reader
     .frames()
-    .find((frame) => frame.url() === "borges://reader/content.html?catalog");
+    .find((frame) => frame.url().startsWith("borges://reader-catalog-"));
   if (!chapter || !engine) throw new Error("Missing EPUB frames");
   for (const frame of [chapter, engine])
     expect(

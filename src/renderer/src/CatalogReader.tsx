@@ -5,8 +5,6 @@ import { ReplaceFileDialog } from "./library/ReplaceFileDialog";
 import { ReaderLinks } from "./ReaderLinks";
 import "./reader.css";
 
-const ENGINE_ORIGIN = "borges://reader";
-
 const restorationNotices: Record<string, string | null> = {
   none: null,
   exact: null,
@@ -36,6 +34,8 @@ export function CatalogReader({
   const [attempt, setAttempt] = useState(0);
   const [replace, setReplace] = useState(false);
   const ready = useRef(false);
+  const [crashed, setCrashed] = useState(false);
+  const failed = useRef(false);
   const draining = useRef<string | null>(null);
   const [reported, setReported] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -48,6 +48,8 @@ export function CatalogReader({
   useEffect(() => {
     let cancelled = false;
     ready.current = false;
+    failed.current = false;
+    setCrashed(false);
     setBook(null);
     setSaved(null);
     setReported(0);
@@ -68,23 +70,33 @@ export function CatalogReader({
   }, [attempt]);
 
   useEffect(() => {
+    const stopCrash = window.borges.reader.onEngineGone(() => {
+      failed.current = true;
+      ready.current = false;
+      setCrashed(true);
+      setAlert(
+        "The book process stopped. Retry reader reopens the last saved position. Commands still in flight may be lost.",
+      );
+      if (draining.current) window.borges.reader.drained(draining.current);
+    });
     const stopDrain = window.borges.reader.onDrain((token) => {
       draining.current = token;
       if (!ready.current) window.borges.reader.drained(token);
       else
         frame.current?.contentWindow?.postMessage(
           { type: "borges:drain", token },
-          ENGINE_ORIGIN,
+          new URL(frame.current?.src ?? "about:blank").origin,
         );
     });
     const stopResume = window.borges.reader.onResume(() => {
       draining.current = null;
       frame.current?.contentWindow?.postMessage(
         { type: "borges:resume" },
-        ENGINE_ORIGIN,
+        new URL(frame.current?.src ?? "about:blank").origin,
       );
     });
     return () => {
+      stopCrash();
       stopDrain();
       stopResume();
     };
@@ -107,7 +119,12 @@ export function CatalogReader({
     const onMessage = (event: MessageEvent) => {
       const engine = frame.current?.contentWindow;
       // Only the assigned engine document; never its chapter frames.
-      if (!engine || event.source !== engine || event.origin !== ENGINE_ORIGIN)
+      if (
+        failed.current ||
+        !engine ||
+        event.source !== engine ||
+        event.origin !== new URL(frame.current?.src ?? "about:blank").origin
+      )
         return;
       const data = (event.data ?? {}) as Record<string, unknown>;
       if (data.type === "borges:ready" && !delivered) {
@@ -122,7 +139,7 @@ export function CatalogReader({
             location: book.location,
             sizing: book.sizing,
           },
-          ENGINE_ORIGIN,
+          new URL(frame.current?.src ?? "about:blank").origin,
           [bytes],
         );
       } else if (data.type === "borges:opened") {
@@ -230,7 +247,7 @@ export function CatalogReader({
           ) : null}
           {notice ? <p data-testid="restoration-notice">{notice}</p> : null}
         </div>
-        {book ? (
+        {book && !crashed ? (
           <iframe
             key={book.generation}
             ref={frame}

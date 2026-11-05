@@ -97,6 +97,11 @@ const borges: BorgesApi = {
     },
   },
   reader: {
+    onEngineGone(listener) {
+      const handler = () => listener();
+      ipcRenderer.on("reader:engine-gone", handler);
+      return () => ipcRenderer.off("reader:engine-gone", handler);
+    },
     replaceFile: () => ipcRenderer.invoke("reader:replace-file"),
     flush: () => ipcRenderer.invoke("reader:flush"),
     drained: (token) => ipcRenderer.send("reader:drained", token),

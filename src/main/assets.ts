@@ -1,5 +1,6 @@
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isReaderHost } from "../shared/windows";
 
 /** Resolve only app-origin resources inside the generated renderer directory. */
 export function resolveAppAsset(urlText: string, root: string): string | null {
@@ -41,7 +42,7 @@ export function resolveReaderAsset(
   try {
     const url = new URL(urlText);
     if (
-      url.host !== "reader" ||
+      !isReaderHost(url.host) ||
       url.protocol !== "borges:" ||
       url.username ||
       url.password
@@ -81,7 +82,7 @@ export async function resolveServedAsset(
       path === ".." ||
       path.startsWith(`..${sep}`) ||
       isAbsolute(path) ||
-      (new URL(urlText).host === "reader" && !isReaderPath(path)) ||
+      (isReaderHost(new URL(urlText).host) && !isReaderPath(path)) ||
       !(await stat(canonicalTarget)).isFile()
     )
       return null;

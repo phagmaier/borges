@@ -369,7 +369,7 @@ async function openReader(
       return {
         pid: contents?.getOSProcessId(),
         contentPid: contents?.mainFrame.frames.find((frame) =>
-          frame.url.startsWith("borges://reader/"),
+          frame.url.startsWith("borges://reader-"),
         )?.osProcessId,
       };
     },
@@ -395,7 +395,7 @@ async function epubOpening(reader: Page) {
 function chapter(reader: Page): Frame {
   const frame = reader
     .frames()
-    .find((candidate) => candidate.url().startsWith("blob:borges://reader/"));
+    .find((candidate) => candidate.url().startsWith("blob:borges://reader-"));
   if (!frame) throw new Error("Missing EPUB chapter frame");
   return frame;
 }
@@ -837,6 +837,9 @@ test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, 
       LARGE_EPUB,
       (reader) => epubOpening(reader),
     );
+    expect(first.contentPid).toBeGreaterThan(0);
+    expect(second.contentPid).toBeGreaterThan(0);
+    expect(first.contentPid).not.toBe(second.contentPid);
     await settle();
     const opened = await memory(application);
 
@@ -905,29 +908,21 @@ test("two catalog readers in a 500-entry catalog: open, turns, saves, searches, 
     const pids = new Set(
       (await memory(application)).processes.map((p) => p.pid),
     );
-    for (const { reader, pid } of [first, second]) {
+    for (const { reader, pid, contentPid } of [first, second]) {
       expect(pid && pids.has(pid)).toBeTruthy();
       const started = performance.now();
       await reader.close();
       await expect
         .poll(
           async () =>
-            (await memory(application)).processes.some((p) => p.pid === pid),
+            (await memory(application)).processes.some(
+              (p) => p.pid === pid || p.pid === contentPid,
+            ),
           { timeout: 10_000, intervals: [50] },
         )
         .toBe(false);
       exitTimes.push(performance.now() - started);
     }
-    // Both books' content frames may share one same-site renderer; it must
-    // also end once no reader uses it.
-    for (const pid of new Set([first.contentPid, second.contentPid]))
-      await expect
-        .poll(
-          async () =>
-            (await memory(application)).processes.some((p) => p.pid === pid),
-          { timeout: 10_000, intervals: [50] },
-        )
-        .toBe(false);
     // Closing flushed the rare-hit positions.
     expect(
       stored(

@@ -223,6 +223,8 @@ export interface BorgesApi {
     onChanged(listener: () => void): () => void;
   };
   reader: {
+    /** Main observed disposal of this window's book-content process. */
+    onEngineGone(listener: () => void): () => void;
     /** Copy a validated external reference after the user chooses Copy Link. */
     copyLink(address: string): Promise<void>;
     /** Start this window's session for its assigned catalog book. */

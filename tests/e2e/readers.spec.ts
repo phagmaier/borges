@@ -20,7 +20,7 @@ for (const sample of [
     await expect(surface.getByRole("status")).toContainText("Ready");
     const frame = reader
       .frames()
-      .find((candidate) => candidate.url().includes("borges://reader/"));
+      .find((candidate) => candidate.url().includes("borges://reader-"));
     expect(frame).toBeDefined();
     expect(
       await frame?.evaluate(() => typeof Reflect.get(window, "development")),
@@ -69,14 +69,14 @@ for (const sample of [
             reader
               .frames()
               .filter((candidate) =>
-                candidate.url().startsWith("blob:borges://reader/"),
+                candidate.url().startsWith("blob:borges://reader-"),
               ).length,
         )
         .toBe(1);
       const chapter = reader
         .frames()
         .find((candidate) =>
-          candidate.url().startsWith("blob:borges://reader/"),
+          candidate.url().startsWith("blob:borges://reader-"),
         );
       if (!chapter) throw new Error("No chapter frame");
       await expect(chapter.locator("body")).toContainText(sample.marker);

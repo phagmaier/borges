@@ -7,6 +7,7 @@ import {
 import {
   type DevelopmentWindow,
   developmentBooks,
+  engineOrigin,
   engineUrl,
 } from "../shared/windows";
 
@@ -237,11 +238,35 @@ export class WindowCoordinator {
               (!initiator ||
                 initiator === window.webContents.mainFrame ||
                 initiator.url === engine)) ||
-              (event.url.startsWith("blob:borges://reader/") &&
+              (event.url.startsWith(
+                `blob:${identity.kind === "reader" ? engineOrigin(identity.book) : ""}/`,
+              ) &&
                 event.frame?.parent?.url === engine &&
                 initiator?.url === engine));
         if (!allowed) event.preventDefault();
       });
+      // Electron reports main-renderer crashes, but a killed cross-site iframe
+      // leaves a disposed WebFrameMain without that event. Inspect only direct
+      // engine frames; never execute code in the book to determine its health.
+      const reportedCrashes = new WeakSet<object>();
+      const monitor =
+        identity.kind === "reader"
+          ? setInterval(() => {
+              if (
+                window.isDestroyed() ||
+                window.webContents.isDestroyed() ||
+                window.webContents.isCrashed()
+              )
+                return;
+              for (const frame of window.webContents.mainFrame.frames) {
+                if (frame.isDestroyed() && !reportedCrashes.has(frame)) {
+                  reportedCrashes.add(frame);
+                  window.webContents.send("reader:engine-gone");
+                }
+              }
+            }, 500)
+          : undefined;
+      window.once("closed", () => clearInterval(monitor));
       const owner = window.webContents.id;
       let closing = false;
       let prepared = false;

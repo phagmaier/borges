@@ -21,7 +21,7 @@ async function openReader(application: ElectronApplication, title: string) {
 function chapter(reader: Page) {
   const frame = reader
     .frames()
-    .find((frame) => frame.url().startsWith("blob:borges://reader/"));
+    .find((frame) => frame.url().startsWith("blob:borges://reader-"));
   if (!frame) throw new Error("Missing visible EPUB chapter");
   return frame;
 }
@@ -357,7 +357,7 @@ test("fixed EPUB remains single page during chapter/percentage navigation and zo
       () =>
         reader
           .frames()
-          .filter((frame) => frame.url().startsWith("blob:borges://reader/"))
+          .filter((frame) => frame.url().startsWith("blob:borges://reader-"))
           .length,
     )
     .toBe(1);
@@ -397,7 +397,7 @@ test("fixed EPUB remains single page during chapter/percentage navigation and zo
       () =>
         reader
           .frames()
-          .filter((frame) => frame.url().startsWith("blob:borges://reader/"))
+          .filter((frame) => frame.url().startsWith("blob:borges://reader-"))
           .length,
     )
     .toBe(1);

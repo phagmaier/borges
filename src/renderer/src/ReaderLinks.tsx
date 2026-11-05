@@ -17,7 +17,7 @@ export function ReaderLinks({
       if (
         !frame.current?.contentWindow ||
         event.source !== frame.current.contentWindow ||
-        event.origin !== "borges://reader" ||
+        event.origin !== new URL(frame.current.src).origin ||
         event.data?.type !== "borges:external-link"
       )
         return;

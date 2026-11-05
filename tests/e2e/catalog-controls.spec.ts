@@ -215,7 +215,7 @@ test("publisher lists and dialogs keep their keys while the EPUB surface turns p
   const { reader, ui } = await openCatalogReader(application, "Reader EPUB");
   const chapter = reader
     .frames()
-    .find((frame) => frame.url().startsWith("blob:borges://reader/"));
+    .find((frame) => frame.url().startsWith("blob:borges://reader-"));
   if (!chapter) throw new Error("Missing EPUB chapter");
   await chapter.evaluate(() => {
     document.addEventListener("keydown", (event) => {

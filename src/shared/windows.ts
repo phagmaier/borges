@@ -19,9 +19,19 @@ export type DevelopmentWindow =
   | { kind: "library" }
   | { kind: "reader"; book: ReaderBook };
 
+/** Give Chromium distinct sites for concurrent book renderers.
+ * IDs are internal UUIDs or diagnostic keys. */
+export function engineOrigin(book: ReaderBook): string {
+  return `borges://reader-${book.source}-${book.id}.reader`;
+}
+
+export function isReaderHost(host: string): boolean {
+  return /^reader-(?:catalog|fixture)-[a-z0-9-]{1,64}\.reader$/.test(host);
+}
+
 /** Engine document assigned to a reader window. */
 export function engineUrl(book: ReaderBook): string {
   return book.source === "catalog"
-    ? "borges://reader/content.html?catalog"
-    : `borges://reader/content.html?book=${book.id}`;
+    ? `${engineOrigin(book)}/content.html?catalog`
+    : `${engineOrigin(book)}/content.html?book=${book.id}`;
 }

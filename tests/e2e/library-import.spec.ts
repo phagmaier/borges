@@ -108,13 +108,13 @@ test("imports a mixed folder, skips identical content with a way to show it, and
       () =>
         epub.reader
           .frames()
-          .filter((frame) => frame.url().startsWith("blob:borges://reader/"))
+          .filter((frame) => frame.url().startsWith("blob:borges://reader-"))
           .length,
     )
     .toBe(1);
   const chapter = epub.reader
     .frames()
-    .find((frame) => frame.url().startsWith("blob:borges://reader/"));
+    .find((frame) => frame.url().startsWith("blob:borges://reader-"));
   if (!chapter) throw new Error("No chapter frame");
   await expect(chapter.locator("body")).toContainText("ORCHID EPUB FIRST");
   const image = chapter.getByAltText("Coral square");

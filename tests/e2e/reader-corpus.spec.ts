@@ -97,12 +97,12 @@ for (const format of ["PDF", "EPUB"]) {
       );
       const engineUrl = reader
         .frames()
-        .find((f) => f.url().startsWith("borges://reader/"))
+        .find((f) => f.url().startsWith("borges://reader-"))
         ?.url();
       const surfaceSize = await ui.locator("#surface").boundingBox();
       const chapter = reader
         .frames()
-        .find((f) => f.url().startsWith("blob:borges://reader/"));
+        .find((f) => f.url().startsWith("blob:borges://reader-"));
       const reference =
         format === "PDF"
           ? ui.getByRole("button", {
@@ -162,7 +162,7 @@ for (const format of ["PDF", "EPUB"]) {
       expect(
         reader
           .frames()
-          .find((f) => f.url().startsWith("borges://reader/"))
+          .find((f) => f.url().startsWith("borges://reader-"))
           ?.url(),
       ).toBe(engineUrl);
       expect(reader.url()).toBe("borges://app/index.html");
@@ -182,7 +182,7 @@ for (const format of ["PDF", "EPUB"]) {
 function chapter(reader: Page): Frame {
   const frame = reader
     .frames()
-    .find((f) => f.url().startsWith("blob:borges://reader/"));
+    .find((f) => f.url().startsWith("blob:borges://reader-"));
   if (!frame) throw new Error("Missing chapter frame");
   return frame;
 }
@@ -544,7 +544,7 @@ test("fixed-layout catalog EPUB fits one page and pans without changing chapter"
     "HARBOR EPUB SECOND",
   );
   expect(
-    reader.frames().filter((f) => f.url().startsWith("blob:borges://reader/"))
+    reader.frames().filter((f) => f.url().startsWith("blob:borges://reader-"))
       .length,
   ).toBe(1);
   await expect(chapter(reader).getByAltText("Coral square")).toBeVisible();

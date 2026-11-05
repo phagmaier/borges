@@ -24,10 +24,10 @@ test("adversarial EPUB cannot execute scripts or navigate out of the book", asyn
   await expect(surface.getByRole("status")).toHaveText("Ready");
   const engine = reader
     .frames()
-    .find((frame) => frame.url().startsWith("borges://reader/"));
+    .find((frame) => frame.url().startsWith("borges://reader-"));
   const chapter = reader
     .frames()
-    .find((frame) => frame.url().startsWith("blob:borges://reader/"));
+    .find((frame) => frame.url().startsWith("blob:borges://reader-"));
   if (!engine || !chapter) throw new Error("Missing reader frames");
   await expect(chapter.locator("body")).toContainText("ORCHID EPUB FIRST");
   expect(
@@ -120,12 +120,12 @@ test("real protocol serving confines decoded paths and file/directory symlinks",
     );
     const responses = await application.evaluate(async ({ net }, prefix) => {
       const urls = [
-        `borges://reader/assets/${prefix}`,
+        `borges://reader-fixture-sample-pdf.reader/assets/${prefix}`,
         `borges://app/assets/${prefix}`,
-        `borges://reader/assets/${prefix}-dir/secret`,
-        `borges://reader/assets/${prefix}-shell`,
-        "borges://reader/assets/..%2findex.html",
-        "borges://reader/reader-assets/..%2f..%2f..%2fetc/passwd",
+        `borges://reader-fixture-sample-pdf.reader/assets/${prefix}-dir/secret`,
+        `borges://reader-fixture-sample-pdf.reader/assets/${prefix}-shell`,
+        "borges://reader-fixture-sample-pdf.reader/assets/..%2findex.html",
+        "borges://reader-fixture-sample-pdf.reader/reader-assets/..%2f..%2f..%2fetc/passwd",
       ];
       return Promise.all(
         urls.map(async (url) => {
@@ -178,7 +178,7 @@ test("offline session denies network requests before they reach a real endpoint"
     ).toHaveText("Ready");
     const chapter = reader
       .frames()
-      .find((frame) => frame.url().startsWith("blob:borges://reader/"));
+      .find((frame) => frame.url().startsWith("blob:borges://reader-"));
     if (!chapter) throw new Error("Missing chapter");
     expect(
       await chapter.evaluate(async (url) => {
@@ -242,7 +242,7 @@ test("book frames have no bridge and forged/replayed progress messages have no a
   await expect(surface.getByRole("status")).toHaveText("Ready");
   const chapter = reader
     .frames()
-    .find((frame) => frame.url().startsWith("blob:borges://reader/"));
+    .find((frame) => frame.url().startsWith("blob:borges://reader-"));
   if (!chapter) throw new Error("Missing chapter");
   expect(
     await chapter.evaluate(() => ({
@@ -306,7 +306,7 @@ test("reader subframes cannot replace their assigned engine via navigation", asy
   await expect(surface.getByRole("status")).toHaveText("Ready");
   const engine = reader
     .frames()
-    .find((frame) => frame.url().startsWith("borges://reader/"));
+    .find((frame) => frame.url().startsWith("borges://reader-"));
   if (!engine) throw new Error("Missing engine");
   const original = engine.url();
   const native = await application.browserWindow(reader);
@@ -322,14 +322,15 @@ test("reader subframes cannot replace their assigned engine via navigation", asy
     );
   });
   await engine.evaluate(() => {
-    location.href = "borges://reader/content.html?book=sample-pdf";
+    location.href =
+      "borges://reader-fixture-sample-pdf.reader/content.html?book=sample-pdf";
   });
   await expect
     .poll(() =>
       native.evaluate((window) => Reflect.get(window, "isolationNavigation")),
     )
     .toEqual({
-      url: "borges://reader/content.html?book=sample-pdf",
+      url: "borges://reader-fixture-sample-pdf.reader/content.html?book=sample-pdf",
       prevented: true,
     });
   expect(engine.url()).toBe(original);
