@@ -17,7 +17,7 @@ interface BookResultsProps {
   onToggle(bookId: string): void;
   onShowMore(): void;
   onOpen(book: BookSummary): void;
-  onDetails(book: BookSummary): void;
+  onSelect(book: BookSummary, additive: boolean): void;
 }
 
 const authorLine = (book: BookSummary) =>
@@ -67,7 +67,7 @@ function MoreResults({
 }
 
 /**
- * Books of the current view. Single click edits details; double click reads.
+ * Books of the current view. Single click selects; double click and Enter read.
  */
 export function BookResults(props: BookResultsProps) {
   const { books, limit, onShowMore } = props;
@@ -108,7 +108,7 @@ function Rendered({
   selected,
   onToggle,
   onOpen,
-  onDetails,
+  onSelect,
 }: BookResultsProps) {
   if (layout === "list")
     return (
@@ -126,7 +126,7 @@ function Rendered({
         </thead>
         <tbody>
           {books.map((book) => (
-            <tr key={book.id}>
+            <tr key={book.id} data-selected={selected.has(book.id)}>
               <td>
                 <SelectBox
                   book={book}
@@ -135,7 +135,12 @@ function Rendered({
                 />
               </td>
               <th scope="row">
-                <BookButton onOpen={onOpen} onDetails={onDetails} book={book}>
+                <BookButton
+                  onOpen={onOpen}
+                  onSelect={onSelect}
+                  selected={selected.has(book.id)}
+                  book={book}
+                >
                   {book.title}
                 </BookButton>
               </th>
@@ -152,8 +157,17 @@ function Rendered({
   return (
     <ul className="book-grid" aria-label="Books">
       {books.map((book) => (
-        <li key={book.id} className="book-card">
-          <BookButton onOpen={onOpen} onDetails={onDetails} book={book}>
+        <li
+          key={book.id}
+          className="book-card"
+          data-selected={selected.has(book.id)}
+        >
+          <BookButton
+            onOpen={onOpen}
+            onSelect={onSelect}
+            selected={selected.has(book.id)}
+            book={book}
+          >
             <Cover book={book} />
             <span className="title">{book.title}</span>
           </BookButton>
@@ -166,37 +180,42 @@ function Rendered({
   );
 }
 
-/** Wait for the second click before opening a modal, which would intercept it. */
-function BookButton({
+/** Immediate selection; opening never depends on a double-click timer. */
+export function BookButton({
   book,
+  selected,
   onOpen,
-  onDetails,
+  onSelect,
   children,
+  className = "title-button",
+  label,
 }: {
   book: BookSummary;
+  selected: boolean;
   onOpen(book: BookSummary): void;
-  onDetails(book: BookSummary): void;
+  onSelect(book: BookSummary, additive: boolean): void;
   children: ReactNode;
+  className?: string;
+  label?: string;
 }) {
-  const click = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(click.current), []);
   return (
     <button
       type="button"
-      className="title-button"
-      title="Click to edit details; double-click to read"
+      className={className}
+      aria-label={label}
+      aria-pressed={selected}
+      title="Click to select; double-click or press Enter to read"
       onClick={(event) => {
-        clearTimeout(click.current);
-        if (event.detail === 0)
-          onDetails(book); // Keyboard activation.
-        else if (event.detail === 1)
-          click.current = setTimeout(() => onDetails(book), 500);
+        if (event.detail <= 1)
+          onSelect(book, event.detail === 0 || event.ctrlKey || event.metaKey);
       }}
-      onBlur={() => clearTimeout(click.current)}
-      onDoubleClick={() => {
-        clearTimeout(click.current);
-        onOpen(book);
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          if (!event.repeat) onOpen(book);
+        }
       }}
+      onDoubleClick={() => onOpen(book)}
     >
       {children}
     </button>

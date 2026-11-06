@@ -399,6 +399,15 @@
   color: var(--muted);
   font-style: italic;
 }
+.book-card[data-selected="true"] .title-button,
+.continue-book[aria-pressed="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: 6px;
+}
+.book-list tr[data-selected="true"] {
+  background: var(--raise);
+  box-shadow: inset 3px 0 var(--accent);
+}
 .book-card .cover {
   height: 222px;
   display: flex;

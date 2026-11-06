@@ -35,6 +35,7 @@ export class PdfSession extends EventTarget implements ReaderSession {
   private surface?: HTMLElement;
   private page = 1;
   private textLayer?: TextLayer;
+  private rendered?: { page: number; scale: number };
   private selectedHit?: SearchHit;
   private rendering = Promise.resolve();
   private disposed = false;
@@ -99,6 +100,13 @@ export class PdfSession extends EventTarget implements ReaderSession {
         surface.offsetHeight / natural.height,
       );
       const viewport = page.getViewport({ scale: fit * this.sizing.zoom });
+      // Scrollbar changes notify ResizeObserver without changing the fit.
+      // Repainting an identical page wastes work and disrupts text selection.
+      if (
+        this.rendered?.page === this.page &&
+        this.rendered.scale === viewport.scale
+      )
+        return;
       const box = document.createElement("div");
       box.className = "pdf-page";
       box.style.width = `${viewport.width}px`;
@@ -108,20 +116,24 @@ export class PdfSession extends EventTarget implements ReaderSession {
       const canvas = document.createElement("canvas");
       canvas.width = Math.ceil(viewport.width);
       canvas.height = Math.ceil(viewport.height);
+      // Bitmap dimensions are integers; layout must retain the exact fitted
+      // size or rounding up creates a scrollbar even at fit-page zoom.
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
       box.append(canvas);
-      this.textLayer?.cancel();
-      surface.replaceChildren(box);
+      // Prepare the entire next page offscreen. Publishing a blank canvas
+      // before PDF.js finishes makes images flash during navigation/zoom.
       await page.render({ canvas, viewport }).promise;
       const text = await page.getTextContent();
       const layer = document.createElement("div");
       layer.className = "textLayer";
       box.append(layer);
-      this.textLayer = new TextLayer({
+      const textLayer = new TextLayer({
         textContentSource: text,
         container: layer,
         viewport,
       });
-      await this.textLayer.render();
+      await textLayer.render();
       const transcript = document.createElement("p");
       transcript.className = "sr-only";
       transcript.dataset.testid = "page-text";
@@ -168,6 +180,14 @@ export class PdfSession extends EventTarget implements ReaderSession {
         };
         box.append(link);
       }
+      if (this.disposed) {
+        textLayer.cancel();
+        return;
+      }
+      this.textLayer?.cancel();
+      this.textLayer = textLayer;
+      surface.replaceChildren(box);
+      this.rendered = { page: this.page, scale: viewport.scale };
       restorePan(surface, pan);
       this.highlightCurrentHit();
       this.dispatchEvent(new Event("relocate"));

@@ -1,4 +1,5 @@
 import type { BookSummary } from "../../../shared/runtime";
+import { BookButton } from "./BookResults";
 import { Cover } from "./Cover";
 
 /** Books shown at most; the strip is a shortcut, not a second listing. */
@@ -26,9 +27,13 @@ function opened(at: number | null): string {
 export function ContinueReading({
   books,
   onOpen,
+  onSelect,
+  selected,
 }: {
   books: BookSummary[];
   onOpen(book: BookSummary): void;
+  onSelect(book: BookSummary, additive: boolean): void;
+  selected: ReadonlySet<string>;
 }) {
   const reading = books
     .filter((book) => book.status === "reading" && !book.archived)
@@ -40,12 +45,14 @@ export function ContinueReading({
       <h2 id="continue-heading">Continue reading</h2>
       <div className="continue-books">
         {reading.map((book) => (
-          <button
+          <BookButton
             key={book.id}
-            type="button"
+            book={book}
+            selected={selected.has(book.id)}
+            onSelect={onSelect}
+            onOpen={onOpen}
             className="continue-book"
-            aria-label={`Continue ${book.title}`}
-            onClick={() => onOpen(book)}
+            label={`Continue ${book.title}`}
           >
             <Cover book={book} />
             <span className="continue-text">
@@ -55,7 +62,7 @@ export function ContinueReading({
                 {opened(book.lastOpenedAt)}
               </span>
             </span>
-          </button>
+          </BookButton>
         ))}
       </div>
     </section>

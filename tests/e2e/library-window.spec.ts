@@ -248,10 +248,6 @@ test("keyboard opening, list layout, live status updates and a deleted selected 
   ).toBe("solid");
   const opened = application.waitForEvent("window");
   await button.press("Enter");
-  await library
-    .getByRole("dialog", { name: "Edit details" })
-    .getByRole("button", { name: "Read book" })
-    .click();
   const reader = await opened;
   await expect(
     reader.frameLocator('iframe[title="Book content"]').getByRole("status"),
@@ -423,41 +419,84 @@ test.describe("a library larger than one batch", () => {
   });
 });
 
-test("single click edits details in grid and list; double click opens only the reader", async ({
+test("click selects immediately; Enter and double click read in grid, list and Continue reading", async ({
   application,
-  seeded,
 }) => {
   const library = await libraryWindow(application);
   for (const layout of ["Grid", "List"]) {
     await library.getByRole("button", { name: layout, exact: true }).click();
-    const book = library
-      .locator(layout === "Grid" ? ".book-grid" : ".book-list")
-      .getByRole("button", { name: "Known PDF", exact: true });
+    const results = library.locator(
+      layout === "Grid" ? ".book-grid" : ".book-list",
+    );
+    const book = results.getByRole("button", {
+      name: "Known PDF",
+      exact: true,
+    });
+    const other = results.getByRole("button", {
+      name: "Image-only PDF",
+      exact: true,
+    });
     await book.click();
+    await expect(book).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      library.getByLabel("Select Known PDF", { exact: true }),
+    ).toBeChecked();
+    await expect(
+      library.getByRole("region", { name: "Selected books" }),
+    ).toContainText("1 book selected");
+    // Allow the old delayed metadata action to fire, if it still exists.
+    await library.waitForTimeout(550);
+    await expect(
+      library.getByRole("dialog", { name: "Edit details" }),
+    ).toHaveCount(0);
+    expect(application.windows()).toHaveLength(1);
+    await other.click();
+    await expect(book).toHaveAttribute("aria-pressed", "false");
+    await expect(other).toHaveAttribute("aria-pressed", "true");
+    await book.click({ modifiers: ["Control"] });
+    await expect(
+      library.getByRole("region", { name: "Selected books" }),
+    ).toContainText("2 books selected");
+    await book.press("Space");
+    await expect(book).toHaveAttribute("aria-pressed", "false");
+    await book.click();
+    // Metadata remains an explicit action on the selection.
+    await library
+      .getByRole("button", { name: "Edit details", exact: true })
+      .click();
     const details = library.getByRole("dialog", { name: "Edit details" });
     await expect(
       details.getByRole("textbox", { name: "Title", exact: true }),
     ).toHaveValue("Known PDF");
-    expect(application.windows()).toHaveLength(1);
-    await details
-      .getByRole("textbox", { name: "Subjects, one per line" })
-      .fill(layout);
-    await details.getByRole("button", { name: "Save", exact: true }).click();
-    await expect(details).toHaveCount(0);
-    const opened = application.waitForEvent("window");
-    await book.dblclick();
-    const reader = await opened;
-    await expect(
-      reader.frameLocator('iframe[title="Book content"]').getByRole("status"),
-    ).toHaveText("Ready");
-    await expect(details).toHaveCount(0);
-    const books = await value<{ id: string; subjects: string[] }[]>(
-      library,
-      "books",
-    );
-    expect(books.find((b) => b.id === seeded["Known PDF"])?.subjects).toEqual([
-      layout,
-    ]);
-    await reader.close();
+    await details.getByRole("button", { name: "Cancel", exact: true }).click();
+    for (const activate of [() => book.press("Enter"), () => book.dblclick()]) {
+      const opened = application.waitForEvent("window");
+      await activate();
+      const reader = await opened;
+      await expect(
+        reader.frameLocator('iframe[title="Book content"]').getByRole("status"),
+      ).toHaveText("Ready");
+      await expect(details).toHaveCount(0);
+      expect(application.windows()).toHaveLength(2);
+      await reader.close();
+    }
   }
+  await library.getByRole("button", { name: "Grid", exact: true }).click();
+  await library
+    .getByRole("button", { name: "Clear selection", exact: true })
+    .click();
+  const shortcut = library.getByRole("button", {
+    name: "Continue Known PDF",
+    exact: true,
+  });
+  await shortcut.click();
+  await expect(shortcut).toHaveAttribute("aria-pressed", "true");
+  expect(application.windows()).toHaveLength(1);
+  const opened = application.waitForEvent("window");
+  await shortcut.press("Enter");
+  await expect(
+    (await opened)
+      .frameLocator('iframe[title="Book content"]')
+      .getByRole("status"),
+  ).toHaveText("Ready");
 });

@@ -68,8 +68,9 @@ Search matches title, author and subject in the selected view. Archive is indepe
 of reading status; opening a Finished or archived book for reference preserves both.
 Finish is explicit. Start Rereading unarchives and restarts at the beginning.
 
-Single click a book to edit its details; double click to read. Enter/Space opens
-Details, which also offers Read book. Continue reading opens the reader directly.
+Single click a book to select it; double click or press Enter to read. This also
+applies to Continue reading. Space, Ctrl-click and the checkboxes toggle selection
+for multiple-book actions. Choose Edit details after selecting one book.
 
 Each book has its own reader window and saved position/sizing. Reopening a book
 reuses its window and requests activation. Hyprland may show urgency instead of

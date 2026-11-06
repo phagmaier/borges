@@ -16,7 +16,6 @@ import {
   ImportTrashDialog,
   useImport,
 } from "./ImportControls";
-import { MetadataDialog } from "./MetadataDialog";
 import { SectionActions } from "./SectionActions";
 import { SelectionBar } from "./SelectionBar";
 import { Sidebar } from "./Sidebar";
@@ -74,7 +73,6 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
   const [queryError, setQueryError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [details, setDetails] = useState<BookSummary | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const ids = useId();
@@ -113,6 +111,11 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
       return next;
     });
   }, []);
+
+  function selectBook(book: BookSummary, additive: boolean) {
+    if (additive) toggle(book.id);
+    else setSelected(new Set([book.id]));
+  }
 
   // A new view or query starts again from the first batch; a refresh of the
   // same query keeps what has been shown.
@@ -417,7 +420,12 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
         destination.kind === "all" &&
         layout === "grid" &&
         !narrowed ? (
-          <ContinueReading books={books} onOpen={open} />
+          <ContinueReading
+            books={books}
+            selected={selected}
+            onSelect={selectBook}
+            onOpen={open}
+          />
         ) : null}
         {destination.kind === "trash" ? (
           <TrashView />
@@ -437,7 +445,7 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
                 selected={selected}
                 onToggle={toggle}
                 onOpen={open}
-                onDetails={setDetails}
+                onSelect={selectBook}
               />
             ) : narrowed ? (
               <div className="empty">
@@ -470,18 +478,6 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
             )}
           </>
         )}
-        {details ? (
-          <MetadataDialog
-            key={details.id}
-            book={details}
-            onClose={() => setDetails(null)}
-            onSaved={() => setDetails(null)}
-            onRead={() => {
-              setDetails(null);
-              open(details);
-            }}
-          />
-        ) : null}
         <footer className="development">
           <h2>{runtime?.diagnostic ? "Development" : "Borges"}</h2>
           <div className="actions">

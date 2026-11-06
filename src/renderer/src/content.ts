@@ -544,13 +544,26 @@ async function open() {
     });
   }
   let queued = false;
-  observer = new ResizeObserver(() => {
+  let resizeVersion = 0;
+  let appliedResize = 0;
+  const resize = () => {
     if (queued || disposed) return;
     queued = true;
     requestAnimationFrame(() => {
-      queued = false;
-      void run(() => session.resize(), false);
+      void run(async () => {
+        appliedResize = resizeVersion;
+        await session.resize();
+      }, false).finally(() => {
+        queued = false;
+        // At most one resize command is queued, even during a long paint.
+        // If the viewport changed during it, apply the latest size next.
+        if (appliedResize !== resizeVersion) resize();
+      });
     });
+  };
+  observer = new ResizeObserver(() => {
+    resizeVersion++;
+    resize();
   });
   observer.observe(surface);
 }

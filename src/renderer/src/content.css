@@ -95,6 +95,11 @@ canvas {
   background: light-dark(#e9e2d4, #121110);
 }
 .pdf-page {
+  /* PDF.js text-layer dimensions use these rounding units, including before
+   * rotating the layer. Without them a rotated layer falls back to inset: 0
+   * and overflows the fitted page. */
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
   position: relative;
   margin: auto;
   flex: none;
