@@ -149,6 +149,7 @@ export class EpubSession extends EventTarget implements ReaderSession {
   }
   constructor(
     private readonly onKey: (event: KeyboardEvent) => void = () => {},
+    private readonly onWheel: (event: WheelEvent) => void = () => {},
   ) {
     super();
   }
@@ -234,6 +235,7 @@ export class EpubSession extends EventTarget implements ReaderSession {
     this.view.addEventListener("load", (event) => {
       const { doc } = (event as CustomEvent<{ doc: Document }>).detail;
       doc.addEventListener("keydown", this.onKey);
+      doc.addEventListener("wheel", this.onWheel, { passive: false });
       doc.addEventListener(
         "click",
         (event) => {

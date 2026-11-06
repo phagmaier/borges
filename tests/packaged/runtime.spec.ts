@@ -464,7 +464,7 @@ test("packaged readers save/resume, replace across formats and retain the old po
     await library
       .getByRole("list", { name: "Books" })
       .getByRole("button", { name: "Known PDF", exact: true })
-      .click();
+      .dblclick();
     const reader = await opened;
     const ui = reader.frameLocator('iframe[title="Book content"]');
     await expect(ui.getByRole("status")).toHaveText("Ready");

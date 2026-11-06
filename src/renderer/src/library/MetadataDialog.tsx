@@ -24,10 +24,12 @@ export function MetadataDialog({
   book,
   onClose,
   onSaved,
+  onRead,
 }: {
   book: BookSummary;
   onClose(): void;
   onSaved(book: BookSummary): void;
+  onRead?(): void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [title, setTitle] = useState(book.title);
@@ -87,6 +89,11 @@ export function MetadataDialog({
         </label>
         {problem ? <p role="alert">{problem}</p> : null}
         <div className="actions">
+          {onRead ? (
+            <button type="button" onClick={onRead}>
+              Read book
+            </button>
+          ) : null}
           <button type="submit">Save</button>
           <button type="button" onClick={() => dialog.current?.close()}>
             Cancel

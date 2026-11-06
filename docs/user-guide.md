@@ -57,7 +57,8 @@ entry does not remove the library.
 
 Use Import files… or Import folder… for DRM-free EPUBs and unencrypted PDFs.
 Imports copy one file at a time, validate content and extract available metadata
-and covers. Per-file summaries explain failures; Cancel retains completed imports.
+and covers. Successful imports finish silently; per-file messages explain skips,
+warnings and failures. Cancel retains completed imports.
 Byte-identical live books are skipped. Matching title/author metadata asks whether
 to Keep Both, Replace or Skip; Borges never silently merges different files.
 
@@ -66,6 +67,9 @@ extra file copies. Removing membership or deleting a section preserves its books
 Search matches title, author and subject in the selected view. Archive is independent
 of reading status; opening a Finished or archived book for reference preserves both.
 Finish is explicit. Start Rereading unarchives and restarts at the beginning.
+
+Single click a book to edit its details; double click to read. Enter/Space opens
+Details, which also offers Read book. Continue reading opens the reader directly.
 
 Each book has its own reader window and saved position/sizing. Reopening a book
 reuses its window and requests activation. Hyprland may show urgency instead of
@@ -76,6 +80,9 @@ and closes all windows. Startup opens the library without reopening old readers.
 | Control | Action |
 | --- | --- |
 | Right/Down, Left/Up on the reading surface | Next/previous page, without wrapping |
+| Mouse wheel down/up on the book | Next/previous page; zoomed fixed pages keep within-page panning |
+| Ctrl+plus (or Ctrl+=) / Ctrl+minus | Increase/decrease zoom or EPUB font size |
+| Hide controls / Show controls, or F9 | Hide/restore the bottom bar and location |
 | `/` | Search the current book's existing text |
 | Enter / Shift+Enter in search | Next/previous result |
 | Esc | Close search and focus the reading surface |
@@ -84,13 +91,14 @@ and closes all windows. Startup opens the library without reopening old readers.
 | Zoom / Fit page | PDF or fixed-layout EPUB; pan within the current page |
 | Font size | Reflowable EPUB; preserve the current passage |
 
-Inputs, buttons, lists and dialogs keep ordinary keyboard behavior. You can select
-and copy existing book text. External references show their address with an explicit
+Search works with the bottom bar hidden; `:` reveals the Jump field.
+Inputs, buttons, lists and dialogs keep ordinary keyboard behavior; Ctrl sizing and
+F9 also work from reader controls. You can select and copy existing book text. External references show their address with an explicit
 Copy Link action, without launching a browser or fetching the target. Images/fonts
 must be local to the book. Book scripts and remote features are blocked.
 
-Positions save automatically and the title line acknowledges commits. Pending and
-failed saves remain visible. Retry saving retries the captured position. Close/Quit
+Positions save automatically and silently. Only failed saves show a message.
+Retry saving retries the captured position. Close/Quit
 waits for queued navigation and its save; on a save failure the default keeps the
 reader open. Close without saving uses the last committed position. After an engine
 failure use Retry reader, Replace file or Open library. Other readers remain usable

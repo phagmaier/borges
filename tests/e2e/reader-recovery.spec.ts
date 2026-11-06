@@ -79,8 +79,9 @@ test("a failed save stays visibly unsaved, retries without navigation and leaves
     await expect(first.reader.getByRole("alert")).toContainText(
       "disk full test",
     );
-    await expect(first.reader.getByTestId("save-status")).toContainText(
-      "Position not saved",
+    await expect(first.reader.getByTestId("save-status")).toHaveAttribute(
+      "data-state",
+      "error",
     );
     await first.reader.screenshot({
       path: test.info().outputPath("save-error.png"),
@@ -94,8 +95,9 @@ test("a failed save stays visibly unsaved, retries without navigation and leaves
     db.exec("DROP TRIGGER fail_progress");
     await first.reader.getByRole("button", { name: "Retry saving" }).click();
     await expect(first.reader.getByRole("alert")).toHaveCount(0);
-    await expect(first.reader.getByTestId("save-status")).toContainText(
-      "Position saved",
+    await expect(first.reader.getByTestId("save-status")).toHaveAttribute(
+      "data-state",
+      "saved",
     );
     expect(stored(profile, seeded["Known PDF"] as string).page).toBe(2);
   } finally {
@@ -117,13 +119,15 @@ test.describe("unexpected termination", () => {
     await ui.getByRole("button", { name: "Next", exact: true }).click();
     await ui.getByRole("spinbutton", { name: "Zoom" }).fill("1.5");
     await ui.getByRole("spinbutton", { name: "Zoom" }).press("Tab");
-    await reader.getByRole("button", { name: "Retry saving" }).click();
+    // Establish a committed checkpoint without displaying routine save controls.
+    await reader.evaluate(() => window.borges.reader.flush());
     await acknowledged(reader);
     expect(stored(profile, seeded["Known PDF"] as string).page).toBe(2);
     await ui.getByRole("button", { name: "Next", exact: true }).click();
     await expect(ui.locator("#location")).toHaveText("Page 3 of 3");
-    await expect(reader.getByTestId("save-status")).toContainText(
-      "Saving position",
+    await expect(reader.getByTestId("save-status")).toHaveAttribute(
+      "data-state",
+      "pending",
     );
     const exited = new Promise((resolve) =>
       application.process().once("exit", resolve),
@@ -251,8 +255,9 @@ test("ordinary navigation is acknowledged within one second and invalid saved PD
       intervals: [10],
     })
     .toBe(2);
-  await expect(reader.getByTestId("save-status")).toContainText(
-    "Position saved",
+  await expect(reader.getByTestId("save-status")).toHaveAttribute(
+    "data-state",
+    "saved",
   );
   expect(Date.now() - start).toBeLessThan(1000);
   await application.close();

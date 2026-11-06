@@ -58,10 +58,11 @@ Accepted working layout: sidebar with nested sections, Currently Reading, Finish
 
 - Library: serif interface type (P052/Palatino family, using installed system fonts, with no downloaded web fonts), warm paper colours that follow the system light/dark preference, and the sidebar on the same paper. The current destination is shown with italic accent text. Section counts are quiet, and small-caps headings divide the sidebar.
 - The main view has a large serif view title and one prominent rounded search field. Author/subject filters and Include archived are folded into a Filters disclosure, whose summary counts the active filters. A Grid/List toggle follows.
+- Single click on a result opens Edit details; double click opens or focuses its reader. Enter/Space opens Edit details, which also offers Read book. Continue reading remains a direct reading shortcut.
 - Grid covers keep their real proportions, bottom-aligned on a shelf line. Missing covers use a dashed placeholder with initials and format. Titles appear in serif type, authors in small caps, status in quiet italics.
 - Selection checkboxes appear over a cover on hover or focus, when checked, and while any book is selected. Selection actions float at the bottom of the view.
 - All Books (grid layout, no search or filters) starts with a Continue reading strip: up to six unarchived Currently Reading books, most recently opened first. The strip is a shortcut; those books still appear in the results. Reading-progress percentages are not shown until a later task records them.
-- Reader: the book fills the window under a quiet small-caps title line that also shows the save state. Controls sit in a faint bottom bar that becomes fully visible on hover or keyboard focus: previous/next, location, Search (`/`), Jump (`:`), Contents, and size/zoom. In-book search opens as a floating panel. Book page colours remain as authored; theming EPUB text for dark mode is not part of this choice.
+- Reader: the book fills the window under a quiet small-caps title line. Routine progress saves are silent; failures remain visible with Retry saving. Controls sit in a faint bottom bar that becomes fully visible on hover or keyboard focus; Hide controls or F9 hides the bar and location, and Show controls or F9 restores them: previous/next, location, Search (`/`), Jump (`:`), Contents, and size/zoom. In-book search opens as a floating panel. Book page colours remain as authored; theming EPUB text for dark mode is not part of this choice.
 
 **Agent-selected defaults:**
 
@@ -103,7 +104,7 @@ Confirmed rules:
 - Use a cryptographic content hash for equality candidates, verifying equality as needed. For metadata suggestions normalize Unicode, case, trimming, and repeated whitespace; require equal nonempty titles and at least one shared nonempty author. Preserve punctuation; do not guess from missing authors or filename alone. Show all candidates and require a specific replacement target.
 - A hash present only in Trash produces a restore/reuse-or-cancel choice, not silent discard. Revision-restore rules below govern its return to the live catalog.
 - Imports/Keep Both from a selected section join that section; other views import into Unfiled. Replacement preserves target memberships. Skipping does not silently add memberships.
-- Independent files succeed/fail independently. Summarize imported, skipped/duplicate, cancelled, unsupported, and failed outcomes with reasons. Cancellation retains completed entries, stops further work, and cleans/recovers the current staged operation.
+- Independent files succeed/fail independently. Successful imports finish silently with the catalog refreshed. Show per-file reasons for skipped/duplicate, cancelled, unsupported and failed outcomes, and extraction/recovery warnings. Cancellation retains completed entries, stops further work, and cleans/recovers the current staged operation.
 - Agent-selected parsing budgets: one sandboxed job at a time, at most 256 MiB input, 30 seconds per job and a 512 MiB renderer working-set watchdog sampled every 250 ms. EPUB: at most 10,000 ZIP entries, 32 MiB per entry, 256 MiB total declared expansion and 8 MiB per parsed XML document. PDF: at most 10,000 pages and one million parsed operators per page. Exceeding a validation budget fails that file with a reason and preserves its source; an optional cover-decoding overrun after validation uses a placeholder with a warning. These are parser resource bounds, not catalog-size limits. Extracted raster covers use the manual-cover byte/dimension and thumbnail bounds.
 - Metadata/cover extraction failure is a warning with fallbacks. Unrecognizable/unparseable book content fails import. Never create a successful entry referencing a partial copy.
 
@@ -131,6 +132,9 @@ Integrated single-page reading only: no facing pages, split panes, or continuous
 | --- | --- |
 | Right/Down on reader surface | Next page; stop at end, no wrapping. |
 | Left/Up on reader surface | Previous page; stop at beginning. |
+| Mouse wheel on the book | Down/up turns next/previous page without wrapping; zoomed fixed pages keep native within-page panning. Brief wheel bursts are grouped; sustained scrolling continues turning pages without queuing a backlog. |
+| Ctrl+plus (or Ctrl+=) / Ctrl+minus | Increase/decrease PDF or fixed-layout zoom, or reflowable EPUB font size. |
+| F9 / Hide controls / Show controls | Toggle the bottom bar and location; Search works while hidden, and `:` reveals Jump. |
 | `/` | In-book text search. |
 | `:` | Jump field: physical PDF page, e.g. `:120`; EPUB percentage, e.g. `:50%`. |
 | Contents panel | Navigate available EPUB chapters/PDF outline entries. |
@@ -141,12 +145,12 @@ Save sizing per book. EPUB resume uses content location, not screen-page number.
 
 **Agent-selected defaults:**
 
-- Reader shortcuts require reading-surface focus. Inputs, lists, dialogs, search results, and buttons retain normal keyboard behavior. Provide visible focus/Tab access and visible navigation/sizing/search/jump/contents controls.
+- Page-turn/search/jump shortcuts require reading-surface focus. Ctrl sizing and F9 also work in reader controls. Inputs, lists, dialogs, search results, and buttons retain normal keyboard behavior. Provide visible focus/Tab access and visible navigation/sizing/search/jump/contents controls.
 - Search existing text only. No OCR. Results show locations/snippets and temporary match highlighting, not persistent annotations. Enter/Shift+Enter traverse matches while searching; Esc closes and restores reader focus. Distinguish no matches from unavailable text, support cancellation/incremental results, and discard stale queries.
 - PDF jumps are integers 1 through page count. EPUB jumps are percentages 0 through 100, allowing decimals. Invalid input explains the error without moving. EPUB percentage is estimated content position, not a printed page.
 - Support internal links and ordinary text selection/copy where text exists. Persistent bookmarks/navigation history are deferred.
 - Pan only within the current zoomed page; wheel/touchpad motion must not become continuous document scrolling.
-- Automatically save position during navigation and flush on close/Quit/replacement/deletion/reread. Target persistence within one second during ordinary reading, acknowledge saves, and expose failures. Unexpected termination restores last committed position, not an uncommitted location. Save state distinguishes pending, committed and failed positions; Retry saving captures queued commands before retrying. Ordinary close/Quit waits for in-flight commands and the final save. On failure, keep the reader open for retry by default; an explicit Close without saving uses the last committed state. Load/engine errors offer Retry reader, confirmed Replace file and Open library actions. Invalid control values remain local to the reader controls.
+- Automatically save position during navigation and flush on close/Quit/replacement/deletion/reread. Target persistence within one second during ordinary reading, track commit acknowledgements internally, and expose failures. Routine saves remain silent. Unexpected termination restores last committed position, not an uncommitted location. Save state distinguishes pending, committed and failed positions; Retry saving captures queued commands before retrying. Ordinary close/Quit waits for in-flight commands and the final save. On failure, keep the reader open for retry by default; an explicit Close without saving uses the last committed state. Load/engine errors offer Retry reader, confirmed Replace file and Open library actions. Invalid control values remain local to the reader controls.
 - PDF position: physical page plus normalized within-page pan when applicable. EPUB: CFI/equivalent stable locator plus chapter/fraction recovery context. If exact restoration fails, use best valid chapter/fraction with an approximate-restoration notice; otherwise explain restart at beginning. Never treat another revision's locator as exact.
 - Fixed-layout EPUBs use zoom/pan with EPUB percentage/chapter navigation. Scripted/remote/network-dependent book features are not required.
 

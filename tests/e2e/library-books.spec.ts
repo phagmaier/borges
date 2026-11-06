@@ -66,7 +66,7 @@ async function openFrom(
   title: string,
 ) {
   const opened = application.waitForEvent("window");
-  await bookButton(library, title).click();
+  await bookButton(library, title).dblclick();
   const reader = await opened;
   const ui = reader.frameLocator('iframe[title="Book content"]');
   await expect(ui.getByRole("status")).toHaveText("Ready");

@@ -40,9 +40,7 @@ export function CatalogReader({
   const [reported, setReported] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
-  const [saved, setSaved] = useState<{ sequence: number; at: number } | null>(
-    null,
-  );
+  const [saved, setSaved] = useState<{ sequence: number } | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry explicitly requests a new session and engine.
   useEffect(() => {
@@ -175,7 +173,7 @@ export function CatalogReader({
     const unsubscribe = window.borges.reader.onProgressResult((result) => {
       if (result.generation !== book.generation) return;
       if (result.ok) {
-        setSaved({ sequence: result.sequence, at: result.savedAt });
+        setSaved({ sequence: result.sequence });
         setSaveError(null);
       } else {
         setSaveError(
@@ -189,6 +187,34 @@ export function CatalogReader({
     };
   }, [book]);
 
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.altKey ||
+        event.metaKey ||
+        (event.target instanceof Element && event.target.closest("dialog"))
+      )
+        return;
+      const action =
+        event.key === "F9"
+          ? "controls"
+          : event.ctrlKey && ["+", "=", "-"].includes(event.key)
+            ? event.key === "-"
+              ? "smaller"
+              : "larger"
+            : null;
+      if (!action || !ready.current || draining.current) return;
+      event.preventDefault();
+      frame.current?.contentWindow?.postMessage(
+        { type: "borges:shortcut", action },
+        new URL(frame.current.src).origin,
+      );
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, []);
+
   return (
     <div className="reader-window">
       <header className="reader-title">
@@ -196,18 +222,19 @@ export function CatalogReader({
         <p
           data-testid="save-status"
           data-sequence={saved?.sequence ?? 0}
-          aria-live="polite"
-        >
-          {saveError
-            ? "Position not saved"
-            : reported > (saved?.sequence ?? 0)
-              ? "Saving position…"
-              : saved
-                ? `Position saved at ${new Date(saved.at).toLocaleTimeString()}`
-                : "Position not saved yet"}
-        </p>
+          hidden
+          data-state={
+            saveError
+              ? "error"
+              : reported > (saved?.sequence ?? 0)
+                ? "pending"
+                : saved
+                  ? "saved"
+                  : "initial"
+          }
+        />
         <span className="reader-window-actions">
-          {book && (saveError || reported > (saved?.sequence ?? 0)) ? (
+          {book && saveError ? (
             <button type="button" onClick={retrySaving}>
               Retry saving
             </button>

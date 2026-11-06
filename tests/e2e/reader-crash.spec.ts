@@ -150,8 +150,9 @@ test.describe("reported but uncommitted state", () => {
       });
       await ui.getByRole("spinbutton", { name: "Font size" }).fill("31");
       await ui.getByRole("spinbutton", { name: "Font size" }).press("Tab");
-      await expect(reader.getByTestId("save-status")).toContainText(
-        "Saving position",
+      await expect(reader.getByTestId("save-status")).toHaveAttribute(
+        "data-state",
+        "pending",
       );
       await expect
         .poll(() =>

@@ -16,6 +16,7 @@ import {
   ImportTrashDialog,
   useImport,
 } from "./ImportControls";
+import { MetadataDialog } from "./MetadataDialog";
 import { SectionActions } from "./SectionActions";
 import { SelectionBar } from "./SelectionBar";
 import { Sidebar } from "./Sidebar";
@@ -73,6 +74,7 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
   const [queryError, setQueryError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [details, setDetails] = useState<BookSummary | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const ids = useId();
@@ -435,6 +437,7 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
                 selected={selected}
                 onToggle={toggle}
                 onOpen={open}
+                onDetails={setDetails}
               />
             ) : narrowed ? (
               <div className="empty">
@@ -467,6 +470,18 @@ export function LibraryWindow({ runtime }: { runtime: RuntimeInfo | null }) {
             )}
           </>
         )}
+        {details ? (
+          <MetadataDialog
+            key={details.id}
+            book={details}
+            onClose={() => setDetails(null)}
+            onSaved={() => setDetails(null)}
+            onRead={() => {
+              setDetails(null);
+              open(details);
+            }}
+          />
+        ) : null}
         <footer className="development">
           <h2>{runtime?.diagnostic ? "Development" : "Borges"}</h2>
           <div className="actions">

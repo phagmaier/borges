@@ -195,6 +195,14 @@ test("PDF fit, zoom and pan stay within one physical page and snapshot restores 
   const { reader, ui } = await openReader(application, "Sample PDF");
   const surface = ui.getByRole("region", { name: "Reading surface" });
   const zoom = ui.getByRole("spinbutton", { name: "Zoom" });
+  await ui
+    .getByRole("region", { name: "Reading surface" })
+    .press("Control+Equal");
+  await expect(zoom).toHaveValue("1.25");
+  await ui
+    .getByRole("region", { name: "Reading surface" })
+    .press("Control+Minus");
+  await expect(zoom).toHaveValue("1");
   await zoom.fill("3");
   await zoom.press("Tab");
   await expect
@@ -342,7 +350,8 @@ test("fixed EPUB remains single page during chapter/percentage navigation and zo
   application,
 }) => {
   const { reader, ui } = await openReader(application, "Fixed EPUB");
-  await ui.getByRole("button", { name: "Next", exact: true }).click();
+  await chapter(reader).locator("body").hover();
+  await reader.mouse.wheel(0, 120);
   await expect
     .poll(async () => {
       try {
@@ -385,6 +394,14 @@ test("fixed EPUB remains single page during chapter/percentage navigation and zo
     })
     .toContain("ORCHID EPUB FIRST");
   const zoom = ui.getByRole("spinbutton", { name: "Zoom" });
+  await ui
+    .getByRole("region", { name: "Reading surface" })
+    .press("Control+Equal");
+  await expect(zoom).toHaveValue("1.25");
+  await ui
+    .getByRole("region", { name: "Reading surface" })
+    .press("Control+Minus");
+  await expect(zoom).toHaveValue("1");
   await zoom.fill("3");
   await zoom.press("Tab");
   await ui.getByText("Diagnostic location snapshot", { exact: true }).click();

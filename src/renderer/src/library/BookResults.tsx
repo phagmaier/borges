@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import type { BookSummary } from "../../../shared/runtime";
 import { Cover } from "./Cover";
 import { statusLabels } from "./views";
@@ -17,6 +17,7 @@ interface BookResultsProps {
   onToggle(bookId: string): void;
   onShowMore(): void;
   onOpen(book: BookSummary): void;
+  onDetails(book: BookSummary): void;
 }
 
 const authorLine = (book: BookSummary) =>
@@ -66,8 +67,7 @@ function MoreResults({
 }
 
 /**
- * Books of the current view. Each book's button is named by its title and
- * opens (or focuses) its reader; Enter and Space work as for any button.
+ * Books of the current view. Single click edits details; double click reads.
  */
 export function BookResults(props: BookResultsProps) {
   const { books, limit, onShowMore } = props;
@@ -108,6 +108,7 @@ function Rendered({
   selected,
   onToggle,
   onOpen,
+  onDetails,
 }: BookResultsProps) {
   if (layout === "list")
     return (
@@ -134,13 +135,9 @@ function Rendered({
                 />
               </td>
               <th scope="row">
-                <button
-                  type="button"
-                  className="title-button"
-                  onClick={() => onOpen(book)}
-                >
+                <BookButton onOpen={onOpen} onDetails={onDetails} book={book}>
                   {book.title}
-                </button>
+                </BookButton>
               </th>
               <td>{authorLine(book)}</td>
               <td>
@@ -156,19 +153,52 @@ function Rendered({
     <ul className="book-grid" aria-label="Books">
       {books.map((book) => (
         <li key={book.id} className="book-card">
-          <button
-            type="button"
-            className="title-button"
-            onClick={() => onOpen(book)}
-          >
+          <BookButton onOpen={onOpen} onDetails={onDetails} book={book}>
             <Cover book={book} />
             <span className="title">{book.title}</span>
-          </button>
+          </BookButton>
           <span className="authors">{authorLine(book)}</span>
           <Status book={book} />
           <SelectBox book={book} selected={selected} onToggle={onToggle} />
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Wait for the second click before opening a modal, which would intercept it. */
+function BookButton({
+  book,
+  onOpen,
+  onDetails,
+  children,
+}: {
+  book: BookSummary;
+  onOpen(book: BookSummary): void;
+  onDetails(book: BookSummary): void;
+  children: ReactNode;
+}) {
+  const click = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(click.current), []);
+  return (
+    <button
+      type="button"
+      className="title-button"
+      title="Click to edit details; double-click to read"
+      onClick={(event) => {
+        clearTimeout(click.current);
+        if (event.detail === 0)
+          onDetails(book); // Keyboard activation.
+        else if (event.detail === 1)
+          click.current = setTimeout(() => onDetails(book), 500);
+      }}
+      onBlur={() => clearTimeout(click.current)}
+      onDoubleClick={() => {
+        clearTimeout(click.current);
+        onOpen(book);
+      }}
+    >
+      {children}
+    </button>
   );
 }

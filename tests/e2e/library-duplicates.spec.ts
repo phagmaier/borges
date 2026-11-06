@@ -34,7 +34,7 @@ async function start(application: ElectronApplication, library: Page) {
     .click();
 }
 const summary = (library: Page) =>
-  library.getByRole("region", { name: "Import summary" });
+  library.getByRole("region", { name: "Import summary", includeHidden: true });
 
 test("A8: shows every candidate, Keep Both adds a separate section member and identical reimport skips without a metadata prompt", async ({
   application,

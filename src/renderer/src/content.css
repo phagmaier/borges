@@ -299,3 +299,31 @@ body [hidden] {
   overflow: hidden;
   clip-path: inset(50%);
 }
+
+/* A small explicit toggle remains available when the footer is hidden. */
+#controls-show {
+  position: fixed;
+  right: 8px;
+  bottom: 6px;
+  z-index: 1;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--paper);
+  opacity: 0.45;
+}
+#controls-show:hover,
+#controls-show:focus-visible {
+  opacity: 1;
+}
+#controls-toggle {
+  font-size: 12px;
+  color: var(--muted);
+}
+body.controls-hidden {
+  grid-template-rows: auto auto 1fr 0 auto;
+}
+@media (max-width: 640px) {
+  body.controls-hidden {
+    grid-template-rows: auto auto 1fr 0 0 auto;
+  }
+}

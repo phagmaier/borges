@@ -43,8 +43,9 @@ test("catalog readers save positions centrally and resume after reopening and re
   await expect(first.ui.getByTestId("page-text")).toContainText("HARBOR THIRD");
   await expect.poll(() => stored(profile, pdf).page).toBe(3);
   await acknowledged(first.reader);
-  await expect(first.reader.getByTestId("save-status")).toContainText(
-    "Position saved",
+  await expect(first.reader.getByTestId("save-status")).toHaveAttribute(
+    "data-state",
+    "saved",
   );
   await first.library.reload();
   await expect(first.library.getByTestId(`status-${pdf}`)).toHaveText(
@@ -350,7 +351,7 @@ test.describe("failed opens", () => {
     const broken = seeded["Broken PDF"] as string;
     const library = await application.firstWindow();
     const opened = application.waitForEvent("window");
-    await bookButton(library, "Broken PDF").click();
+    await bookButton(library, "Broken PDF").dblclick();
     const reader = await opened;
     await expect(reader.getByRole("alert")).toContainText(
       "could not be opened",
@@ -375,7 +376,7 @@ test.describe("failed opens", () => {
     const original = await readFile(join(profile, "library", path));
     await rm(join(profile, "library", path));
     const missing = application.waitForEvent("window");
-    await bookButton(library, "Known PDF").click();
+    await bookButton(library, "Known PDF").dblclick();
     const missingReader = await missing;
     await expect(missingReader.getByRole("alert")).toContainText(
       "could not be read from the library",

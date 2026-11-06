@@ -1,5 +1,5 @@
 /* Catalog reader window shell ("Reading room", M3-06): a quiet small-caps
- * title line with the save state above the book content frame. */
+ * title line above the book content frame. Save failures float over the page. */
 .reader-window {
   --paper: light-dark(#f6f1e7, #1d1a16);
   --ink: light-dark(#2a2420, #ebe3d5);
@@ -33,17 +33,6 @@
   font-size: 0.95rem;
   font-weight: normal;
   color: var(--ink);
-}
-.reader-title p {
-  margin: 0;
-  /* The save message gives way before the title in narrow windows. */
-  flex: 0 100 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 0.8rem;
-  white-space: nowrap;
-  opacity: 0.75;
 }
 .reader-window-actions {
   margin-left: auto;

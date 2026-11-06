@@ -39,6 +39,8 @@ export interface ImportOutcome {
   name: string;
   kind: ImportOutcomeKind;
   message: string;
+  /** Nonfatal results that still need to be shown after an otherwise successful batch. */
+  warnings?: string[];
   /** The new book, for imported files. */
   bookId?: string;
   /** A replacement keeps target memberships rather than joining the import section. */
@@ -210,15 +212,23 @@ async function importOne(
       ...(pace ? { pace } : {}),
     });
     onImported?.(added.bookId);
+    const sectionMissing =
+      sectionId !== null && !added.replaced && !added.joinedSection;
+    const warnings = [...added.warnings];
+    if (sectionMissing)
+      warnings.push(
+        "The target section was deleted during import; the book is in Unfiled.",
+      );
     outcome = {
       name,
       kind: "imported",
       bookId: added.bookId,
       ...(added.replaced ? { replaced: true } : {}),
+      ...(warnings.length ? { warnings } : {}),
       message:
         (added.replaced
           ? `Replaced file for “${added.title}”; previous file and position kept in Trash.`
-          : sectionId !== null && !added.joinedSection
+          : sectionMissing
             ? `Imported as “${added.title}” into Unfiled: the target section was deleted during the import.`
             : `Imported as “${added.title}”.`) +
         added.warnings.map((warning) => ` Warning: ${warning}`).join(""),
@@ -234,6 +244,9 @@ async function importOne(
           name,
           kind: "restored",
           message: error.message,
+          ...(error.restored?.warnings.length
+            ? { warnings: error.restored.warnings }
+            : {}),
           ...(error.restored ? { bookId: error.restored.bookId } : {}),
         };
         return outcome;
@@ -262,7 +275,10 @@ async function importOne(
   } finally {
     if (quiesced && afterReplacement) {
       const warning = await afterReplacement(quiesced);
-      if (warning && outcome) outcome.message += ` Warning: ${warning}`;
+      if (warning && outcome) {
+        outcome.message += ` Warning: ${warning}`;
+        outcome.warnings = [...(outcome.warnings ?? []), warning];
+      }
     }
   }
 }

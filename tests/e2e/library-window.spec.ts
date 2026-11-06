@@ -248,6 +248,10 @@ test("keyboard opening, list layout, live status updates and a deleted selected 
   ).toBe("solid");
   const opened = application.waitForEvent("window");
   await button.press("Enter");
+  await library
+    .getByRole("dialog", { name: "Edit details" })
+    .getByRole("button", { name: "Read book" })
+    .click();
   const reader = await opened;
   await expect(
     reader.frameLocator('iframe[title="Book content"]').getByRole("status"),
@@ -277,7 +281,7 @@ test("keyboard opening, list layout, live status updates and a deleted selected 
   const second = application.waitForEvent("window");
   await table
     .getByRole("button", { name: "Image-only PDF", exact: true })
-    .click();
+    .dblclick();
   await second;
   expect(application.windows()).toHaveLength(3);
 
@@ -417,4 +421,43 @@ test.describe("a library larger than one batch", () => {
       .evaluate((main) => main.scrollTo(0, main.scrollHeight));
     await expect(items).toHaveCount(130);
   });
+});
+
+test("single click edits details in grid and list; double click opens only the reader", async ({
+  application,
+  seeded,
+}) => {
+  const library = await libraryWindow(application);
+  for (const layout of ["Grid", "List"]) {
+    await library.getByRole("button", { name: layout, exact: true }).click();
+    const book = library
+      .locator(layout === "Grid" ? ".book-grid" : ".book-list")
+      .getByRole("button", { name: "Known PDF", exact: true });
+    await book.click();
+    const details = library.getByRole("dialog", { name: "Edit details" });
+    await expect(
+      details.getByRole("textbox", { name: "Title", exact: true }),
+    ).toHaveValue("Known PDF");
+    expect(application.windows()).toHaveLength(1);
+    await details
+      .getByRole("textbox", { name: "Subjects, one per line" })
+      .fill(layout);
+    await details.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(details).toHaveCount(0);
+    const opened = application.waitForEvent("window");
+    await book.dblclick();
+    const reader = await opened;
+    await expect(
+      reader.frameLocator('iframe[title="Book content"]').getByRole("status"),
+    ).toHaveText("Ready");
+    await expect(details).toHaveCount(0);
+    const books = await value<{ id: string; subjects: string[] }[]>(
+      library,
+      "books",
+    );
+    expect(books.find((b) => b.id === seeded["Known PDF"])?.subjects).toEqual([
+      layout,
+    ]);
+    await reader.close();
+  }
 });

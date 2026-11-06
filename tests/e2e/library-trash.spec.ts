@@ -114,7 +114,7 @@ test("A10: deletion flushes and closes a reader; restore retains status, Archive
     .getByRole("button", { name: "Archive", exact: true })
     .click();
   const opened = application.waitForEvent("window");
-  await bookButton(library, "My Atlas").click();
+  await bookButton(library, "My Atlas").dblclick();
   const resumed = (await opened).frameLocator('iframe[title="Book content"]');
   await expect(resumed.locator("#location")).toHaveText("Page 3 of 3");
 });

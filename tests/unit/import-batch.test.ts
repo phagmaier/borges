@@ -261,6 +261,9 @@ describe("batch import", () => {
       kind: "imported",
       message:
         "Imported as “Story” into Unfiled: the target section was deleted during the import.",
+      warnings: [
+        "The target section was deleted during import; the book is in Unfiled.",
+      ],
     });
     expect(rows("SELECT book_id FROM section_memberships")).toHaveLength(1);
 
@@ -556,8 +559,13 @@ it("replaces exactly the chosen candidate and keeps its state and old revision i
         expect(id).toBe(b.bookId);
         retired = true;
       },
+      afterReplacement: async () =>
+        "Reader reload failed; close and reopen this reader.",
     },
   );
+  expect(result.outcomes[0]?.warnings).toEqual([
+    "Reader reload failed; close and reopen this reader.",
+  ]);
   expect(retired).toBe(true);
   expect(result.outcomes[0]?.message).toContain("Replaced file");
   expect(result.outcomes[0]?.bookId).toBe(b.bookId);

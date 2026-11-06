@@ -212,9 +212,22 @@ export function ImportStatus({
   const imported = summary.outcomes.some(
     (outcome) => outcome.kind === "imported" && !outcome.replaced,
   );
+  const quiet =
+    !summary.cancelled &&
+    summary.outcomes.every(
+      (outcome) =>
+        (outcome.kind === "imported" || outcome.kind === "restored") &&
+        !outcome.warnings?.length,
+    );
   return (
-    <section className="import-panel" aria-label="Import summary">
-      <h2>{summary.cancelled ? "Import cancelled" : "Import finished"}</h2>
+    <section
+      className="import-panel"
+      aria-label="Import summary"
+      hidden={quiet}
+    >
+      <h2>
+        {summary.cancelled ? "Import cancelled" : "Import needs attention"}
+      </h2>
       <p data-testid="import-counts">
         {groups.length === 0
           ? "No files were selected."

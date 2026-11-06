@@ -51,7 +51,7 @@ async function digests(directory: string): Promise<Record<string, string>> {
 }
 
 const summary = (library: Page) =>
-  library.getByRole("region", { name: "Import summary" });
+  library.getByRole("region", { name: "Import summary", includeHidden: true });
 const titles = (profile: string) =>
   catalog(profile, (db) =>
     db
@@ -180,6 +180,7 @@ test("imports a mixed folder, skips identical content with a way to show it, and
   await chooser(application, [story]);
   await library.getByRole("button", { name: "Import files…" }).click();
   await expect(summary(library)).toContainText("New books joined Maps.");
+  await expect(summary(library)).toBeHidden();
   await expect(library.locator(".result-count")).toHaveText("1 book");
   await expect(bookButton(library, "Borges known fixture")).toBeVisible();
   expect(

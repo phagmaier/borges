@@ -85,7 +85,37 @@ function showSearch() {
   query.focus();
   if (reopening) void searchBook();
 }
+const controlsToggle = element<HTMLButtonElement>("#controls-toggle");
+const controlsShow = element<HTMLButtonElement>("#controls-show");
+function toggleControls(
+  show = controlsToggle.getAttribute("aria-expanded") !== "true",
+) {
+  controlsToggle.setAttribute("aria-expanded", String(show));
+  controlsShow.setAttribute("aria-expanded", String(show));
+  controlsShow.hidden = show;
+  document.body.classList.toggle("controls-hidden", !show);
+  element("nav").hidden = !show;
+  element("#location").hidden = !show;
+}
+controlsToggle.onclick = controlsShow.onclick = () => {
+  toggleControls();
+  surface.focus();
+};
 function handleKey(event: KeyboardEvent) {
+  if (!session || disposed || document.body.inert || element("nav").inert)
+    return;
+  if (event.defaultPrevented || event.altKey || event.metaKey) return;
+  if (event.key === "F9") {
+    event.preventDefault();
+    toggleControls();
+    surface.focus();
+    return;
+  }
+  if (event.ctrlKey && ["+", "=", "-"].includes(event.key)) {
+    event.preventDefault();
+    resizeBy(event.key === "-" ? -1 : 1);
+    return;
+  }
   const target = event.target as Element | null;
   if (
     target?.closest(
@@ -111,10 +141,48 @@ function handleKey(event: KeyboardEvent) {
     showSearch();
   } else if (event.key === ":") {
     event.preventDefault();
+    toggleControls(true);
     element<HTMLInputElement>('input[name="jump"]').focus();
   }
 }
-surface.addEventListener("keydown", handleKey);
+document.addEventListener("keydown", handleKey);
+let wheelBusy = false;
+let wheelUntil = 0;
+function handleWheel(event: WheelEvent) {
+  const target = event.target as Element | null;
+  if (
+    !session ||
+    disposed ||
+    document.body.inert ||
+    element("nav").inert ||
+    event.defaultPrevented ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    target?.closest(
+      'input,textarea,select,button,[contenteditable],dialog,[role="dialog"],[role="listbox"]',
+    ) ||
+    Math.abs(event.deltaY) <= Math.abs(event.deltaX)
+  )
+    return;
+  // Zoomed fixed pages keep native pan. Fit-page and reflowable wheels turn pages.
+  if (
+    (session.format === "pdf" &&
+      surface.scrollHeight > surface.clientHeight + 1) ||
+    (!session.reflowable && session.sizing.zoom > 1)
+  )
+    return;
+  if (!event.deltaY) return;
+  event.preventDefault();
+  const now = performance.now();
+  if (wheelBusy || now < wheelUntil) return;
+  wheelUntil = now + 180; // Group brief bursts without blocking sustained scrolling.
+  wheelBusy = true;
+  void run(() => session.turn(event.deltaY > 0 ? 1 : -1)).finally(() => {
+    wheelBusy = false;
+  });
+}
+surface.addEventListener("wheel", handleWheel, { passive: false });
 async function searchBook() {
   search?.abort();
   session.clearSearch();
@@ -255,6 +323,19 @@ async function size() {
   await session.setSizing({ fontSize, zoom: value });
   reportPosition();
 }
+function resizeBy(direction: number) {
+  void run(async () => {
+    if (session.reflowable)
+      font.value = String(
+        Math.max(8, Math.min(72, session.sizing.fontSize + direction * 2)),
+      );
+    else
+      zoom.value = String(
+        Math.max(0.25, Math.min(8, session.sizing.zoom + direction * 0.25)),
+      );
+    await size();
+  });
+}
 font.onchange = zoom.onchange = () => {
   void run(size);
 };
@@ -312,7 +393,13 @@ let lastPosition:
   | undefined;
 window.addEventListener("message", (event) => {
   if (event.source !== window.parent || event.origin !== parentOrigin) return;
-  if (event.data?.type === "borges:resume") {
+  if (event.data?.type === "borges:shortcut") {
+    if (!session || disposed || document.body.inert || element("nav").inert)
+      return;
+    if (event.data.action === "larger") resizeBy(1);
+    else if (event.data.action === "smaller") resizeBy(-1);
+    else if (event.data.action === "controls") toggleControls();
+  } else if (event.data?.type === "borges:resume") {
     document.body.inert = false;
   } else if (
     event.data?.type === "borges:drain" &&
@@ -385,7 +472,7 @@ async function open() {
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
   const isPdf = book ? book.format === "pdf" : name.endsWith(".pdf");
-  session = isPdf ? new PdfSession() : new EpubSession(handleKey);
+  session = isPdf ? new PdfSession() : new EpubSession(handleKey, handleWheel);
   session.addEventListener("navigate", (event) => {
     const target = (event as CustomEvent<ReaderLocation>).detail;
     void run(async () => {

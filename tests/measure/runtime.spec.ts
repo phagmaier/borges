@@ -469,8 +469,9 @@ async function acknowledgedTurns(
       .toBeGreaterThan(before);
     times.push(performance.now() - started);
   }
-  await expect(reader.getByTestId("save-status")).toContainText(
-    "Position saved",
+  await expect(reader.getByTestId("save-status")).toHaveAttribute(
+    "data-state",
+    "saved",
   );
   return times;
 }

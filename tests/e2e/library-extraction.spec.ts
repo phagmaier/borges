@@ -25,7 +25,7 @@ async function importFiles(
 }
 const fixture = (name: string) => resolve("tests/fixtures", name);
 const summary = (page: Page) =>
-  page.getByRole("region", { name: "Import summary" });
+  page.getByRole("region", { name: "Import summary", includeHidden: true });
 const hash = async (path: string) =>
   createHash("sha256")
     .update(await readFile(path))
@@ -139,6 +139,8 @@ test("A1: imports mixed content offline, extracts metadata and decoded covers, r
     expect(book?.cover_path).toMatch(/^covers\/.+\.png$/);
     expect(book?.extracted_cover_path).toBe(book?.cover_path);
     const button = bookButton(library, String(book?.title));
+    // Covers load only near the viewport; the import report can push the shelf down.
+    await button.scrollIntoViewIfNeeded();
     const image = button.locator("img");
     await expect(image).toBeVisible();
     const dimensions = await image.evaluate((img: HTMLImageElement) => [
@@ -160,6 +162,14 @@ test("A1: imports mixed content offline, extracts metadata and decoded covers, r
     "ORCHID EPUB FIRST",
   );
   const missing = await openCatalogReader(application, "import-no-metadata");
+  // A compact tiled reader must still leave room for the actual EPUB page.
+  await missing.reader
+    .locator('iframe[title="Book content"]')
+    .evaluate((frame: HTMLIFrameElement) => {
+      frame.style.flex = "none";
+      frame.style.width = "456px";
+      frame.style.height = "195px";
+    });
   await expect(missing.ui.getByTestId("visible-text")).toContainText(
     "ORCHID EPUB FIRST",
   );
@@ -195,7 +205,7 @@ for (const mode of ["cancel", "timeout", "memory", "cover-crash"] as const) {
     await expect(summary(library).getByTestId("import-counts")).toHaveText(
       "1 imported",
     );
-    await library.getByRole("button", { name: "Dismiss" }).click();
+    await expect(summary(library)).toBeHidden();
     const reader = await openCatalogReader(application, "known");
     const readerPids = await application.evaluate(({ BrowserWindow }) => {
       const reader = BrowserWindow.getAllWindows().find(
