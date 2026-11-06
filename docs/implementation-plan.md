@@ -6,7 +6,7 @@ Read [AGENTS.md](../AGENTS.md), [spec.md](spec.md), [architecture.md](architectu
 
 ## Current task
 
-**v0.1.0 personal prerelease (2026-11-06):** user-authorized commit/tag and GitHub archive delivery of the existing x86-64 Arch build. Version/download instructions and source provenance are added; `check` (347 unit cases) and direct sandboxed personal delivery pass. Verify the extracted final archive and remote asset checksums during publication. See [release workflow and evidence](development.md#versioned-personal-prerelease-v010-2026-11-06). Laptop validation remains separate.
+Complete: **v0.1.0 personal prerelease (2026-11-06)** is [published on GitHub](https://github.com/phagmaier/borges/releases/tag/v0.1.0), tagged at `3a0f130`. Version/download instructions and source provenance are added; `check` (347 unit cases), direct sandboxed personal delivery and the freshly extracted final archive pass. Both uploaded asset digests match the verified local files. See [release workflow and evidence](development.md#versioned-personal-prerelease-v010-2026-11-06). Laptop validation remains separate.
 
 Complete: **Dark reading mode (2026-11-06)**. Reader-footer Dark mode themes pages and chrome, retains the current passage and saves per book through existing acknowledged progress storage (schema 4). Reflowable EPUB images retain colours; composed PDF/fixed pages are tinted as a whole. Strict types/Biome/347 unit cases/build, 24 focused native cases and ten focused relocated package cases pass. `mise run package` rebuilt `dist/borges/launch`. See [evidence and limits](development.md#dark-reading-mode-2026-11-06).
 

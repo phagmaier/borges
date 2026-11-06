@@ -6,7 +6,7 @@ Build a personal, fully offline PDF/EPUB library manager and integrated reader f
 
 Post-delivery dark reading mode (2026-11-06) is complete: a reader-footer toggle themes pages/chrome and saves per book through acknowledged progress storage (schema 4). See the current task and dark-mode evidence in the handoff/development documents.
 
-The user authorized a versioned GitHub prerelease archive of the existing personal x86-64 Arch build (2026-11-06). This is a delivery channel for that build; general-purpose distribution, AUR/AppImage packaging and other-platform support remain deferred.
+The user-authorized v0.1.0 GitHub prerelease of the existing personal x86-64 Arch build is published (2026-11-06), tagged at `3a0f130`. The final extracted archive passed direct sandboxed delivery and uploaded asset digests match local files; see the release evidence in development.md. This is a delivery channel for that build; general-purpose distribution, AUR/AppImage packaging and other-platform support remain deferred.
 
 Borges is the project name. Another user/OS and Calibre compatibility must not drive the first version.
 
