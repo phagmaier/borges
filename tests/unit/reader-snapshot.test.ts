@@ -26,6 +26,15 @@ describe("reader diagnostic snapshot boundary", () => {
     expect(
       parseSnapshot(JSON.stringify(pdf), "known revision").location,
     ).toEqual({ format: "pdf", page: 3, x: 0.2, y: 0.6 });
+    expect(
+      parseSnapshot(
+        JSON.stringify({
+          ...saved,
+          sizing: { ...saved.sizing, theme: "dark" },
+        }),
+        "known revision",
+      ).sizing.theme,
+    ).toBe("dark");
   });
   it.each([
     { ...saved, revision: "another revision" },
@@ -36,6 +45,7 @@ describe("reader diagnostic snapshot boundary", () => {
     { ...saved, location: { format: "pdf", page: 0, x: 0, y: 0 } },
     { ...saved, sizing: { fontSize: 0, zoom: 1 } },
     { ...saved, sizing: { fontSize: 24, zoom: 900 } },
+    { ...saved, sizing: { fontSize: 24, zoom: 1, theme: "blue" } },
     { ...saved, location: { ...saved.location, x: -1 } },
     null,
   ])("rejects malformed, future or foreign state: %j", (snapshot) => {

@@ -282,11 +282,8 @@ export class EpubSession extends EventTarget implements ReaderSession {
         justifyContent: "safe center",
         alignItems: "safe center",
       });
+    if (this.reflowable) this.view.renderer.setStyles(this.readingStyles());
     await this.view.init({ showTextStart: true });
-    if (this.reflowable)
-      this.view.renderer.setStyles(
-        `body { font-size: ${this.sizing.fontSize}px !important; }`,
-      );
     const visit = (items: Toc[], prefix = "") => {
       for (const item of items) {
         const resolved = book.resolveHref(item.href);
@@ -391,9 +388,7 @@ export class EpubSession extends EventTarget implements ReaderSession {
     const location = this.capture();
     this.sizing = { ...sizing };
     if (this.reflowable) {
-      this.view?.renderer.setStyles(
-        `body { font-size: ${sizing.fontSize}px !important; }`,
-      );
+      this.view?.renderer.setStyles(this.readingStyles());
       await Promise.all(
         this.view?.renderer.getContents().map(({ doc }) => doc.fonts.ready) ??
           [],
@@ -408,6 +403,24 @@ export class EpubSession extends EventTarget implements ReaderSession {
       );
       await settled();
     }
+  }
+  private readingStyles() {
+    const font = `body { font-size: ${this.sizing.fontSize}px !important; }`;
+    if (this.sizing.theme !== "dark") return font;
+    // Keep the chapter DOM/CFIs, typography and image colours intact. The
+    // renderer applies this stylesheet to current and subsequently loaded chapters.
+    return `${font}
+      html { color-scheme: dark !important; background-color: #1d1a16 !important; }
+      html body, html body :not(svg, svg *, img, image, video, canvas) {
+        color: #ebe3d5 !important;
+        background-color: transparent !important;
+        border-color: #615749 !important;
+      }
+      html body a:any-link, html body a:any-link :not(svg, svg *) {
+        color: #e3a47d !important;
+      }
+      ::selection { background: #66523a; color: #fff4e1; }
+    `;
   }
   async resize() {
     const location = this.capture();

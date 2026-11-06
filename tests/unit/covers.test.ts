@@ -60,9 +60,9 @@ it("migrates schema 2 with a snapshot and preserves recovery records", () => {
   );
   library.close();
   library = openLibrary({ root: library.root });
-  expect(library.upgrade).toMatchObject({ from: 2, to: 3 });
+  expect(library.upgrade).toMatchObject({ from: 2, to: 4 });
   expect(readdirSync(join(library.root, "recovery"))).toEqual([
-    expect.stringMatching(/^catalog-schema-2-before-3-/),
+    expect.stringMatching(/^catalog-schema-2-before-4-/),
   ]);
   expect(
     library.database

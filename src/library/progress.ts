@@ -1,5 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { ReaderLocation, ReaderSizing } from "../readers/session.ts";
+import type {
+  ReaderLocation,
+  ReaderSizing,
+  ReaderTheme,
+} from "../readers/session.ts";
 import { immediate } from "../storage/transaction.ts";
 
 // Reader progress storage. Every check that decides whether a write may land
@@ -28,6 +32,7 @@ export class ProgressError extends Error {
 export interface StoredSizing {
   fontSize: number | null;
   zoom: number | null;
+  theme?: ReaderTheme;
 }
 
 /** What a newly opened reader may restore and the session it must write as. */
@@ -100,7 +105,7 @@ export function beginReaderSession(
         .get(book.revision);
       const settings = database
         .prepare(
-          "SELECT font_size, zoom FROM reader_settings WHERE book_id = ?",
+          "SELECT font_size, zoom, theme FROM reader_settings WHERE book_id = ?",
         )
         .get(bookId);
       return {
@@ -112,6 +117,7 @@ export function beginReaderSession(
         sizing: {
           fontSize: (settings?.font_size as number | null) ?? null,
           zoom: (settings?.zoom as number | null) ?? null,
+          ...(settings?.theme ? { theme: settings.theme as ReaderTheme } : {}),
         },
       };
     }),
@@ -202,9 +208,15 @@ export function saveProgress(
         );
       database
         .prepare(
-          "INSERT OR REPLACE INTO reader_settings (book_id, font_size, zoom, updated_at) VALUES (?, ?, ?, ?)",
+          "INSERT OR REPLACE INTO reader_settings (book_id, font_size, zoom, theme, updated_at) VALUES (?, ?, ?, ?, ?)",
         )
-        .run(write.bookId, sizing.fontSize, sizing.zoom, now);
+        .run(
+          write.bookId,
+          sizing.fontSize,
+          sizing.zoom,
+          sizing.theme ?? null,
+          now,
+        );
       return {
         bookId: write.bookId,
         revisionId: write.revisionId,
@@ -274,6 +286,12 @@ export function parseProgressWrite(input: unknown): ProgressWrite {
     throw invalid("pan must be within the page");
   if (!inRange(sizing.fontSize, 8, 72) || !inRange(sizing.zoom, 0.25, 8))
     throw invalid("sizing is out of range");
+  if (
+    sizing.theme !== undefined &&
+    sizing.theme !== "original" &&
+    sizing.theme !== "dark"
+  )
+    throw invalid("unknown reading theme");
   let parsed: ReaderLocation;
   if (location.format === "pdf") {
     if (!isCount(location.page)) throw invalid("PDF page must be 1 or more");
@@ -313,6 +331,7 @@ export function parseProgressWrite(input: unknown): ProgressWrite {
     sizing: {
       fontSize: sizing.fontSize as number,
       zoom: sizing.zoom as number,
+      ...(sizing.theme ? { theme: sizing.theme as ReaderTheme } : {}),
     },
   };
 }

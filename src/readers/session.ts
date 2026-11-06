@@ -11,9 +11,12 @@ export type ReaderLocation =
       x: number;
       y: number;
     };
+export type ReaderTheme = "original" | "dark";
 export interface ReaderSizing {
   fontSize: number;
   zoom: number;
+  /** Omitted in older settings/snapshots: preserve authored page colours. */
+  theme?: ReaderTheme;
 }
 export interface ReaderSnapshot {
   version: 1;
@@ -70,6 +73,11 @@ export function parseSnapshot(text: string, revision: string): ReaderSnapshot {
     value.revision !== revision ||
     !location ||
     !sizing ||
+    !(
+      sizing.theme === undefined ||
+      sizing.theme === "original" ||
+      sizing.theme === "dark"
+    ) ||
     !unit(location.x) ||
     !unit(location.y) ||
     !(

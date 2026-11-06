@@ -62,7 +62,7 @@ Accepted working layout: sidebar with nested sections, Currently Reading, Finish
 - Grid covers keep their real proportions, bottom-aligned on a shelf line. Missing covers use a dashed placeholder with initials and format. Titles appear in serif type, authors in small caps, status in quiet italics.
 - Selection checkboxes appear over a cover on hover or focus, when checked, and while any book is selected. Selection actions float at the bottom of the view.
 - All Books (grid layout, no search or filters) starts with a Continue reading strip: up to six unarchived Currently Reading books, most recently opened first. The strip is a shortcut; those books still appear in the results. Reading-progress percentages are not shown until a later task records them.
-- Reader: the book fills the window under a quiet small-caps title line. Routine progress saves are silent; failures remain visible with Retry saving. Controls sit in a faint bottom bar that becomes fully visible on hover or keyboard focus; Hide controls or F9 hides the bar and location, and Show controls or F9 restores them: previous/next, location, Search (`/`), Jump (`:`), Contents, and size/zoom. In-book search opens as a floating panel. Book page colours remain as authored; theming EPUB text for dark mode is not part of this choice.
+- Reader: the book fills the window under a quiet small-caps title line. Routine progress saves are silent; failures remain visible with Retry saving. Controls sit in a faint bottom bar that becomes fully visible on hover or keyboard focus; Hide controls or F9 hides the bar and location, and Show controls or F9 restores them: previous/next, location, Search (`/`), Jump (`:`), Contents, and size/zoom. In-book search opens as a floating panel. Dark mode in the bottom bar opts the book and its reader chrome into a warm charcoal palette; switching it off restores authored page colours. Save this choice per book. Reflowable EPUB text/backgrounds are themed while images keep their colours; PDFs and fixed-layout EPUBs use a presentation tint that also affects illustrations.
 
 **Agent-selected defaults:**
 
@@ -140,8 +140,9 @@ Integrated single-page reading only: no facing pages, split panes, or continuous
 | Contents panel | Navigate available EPUB chapters/PDF outline entries. |
 | PDF/fixed-layout sizing | Initially fit whole page; zoom and mouse/touchpad pan within it. |
 | Reflowable EPUB sizing | Adjustable font size; preserve same content passage after repagination. |
+| Dark mode | Toggle a dark reading palette without changing the current passage; remember per book. Off restores authored page colours. |
 
-Save sizing per book. EPUB resume uses content location, not screen-page number. Font/window changes must not send the user to unrelated content.
+Save sizing and dark mode per book. EPUB resume uses content location, not screen-page number. Font/window changes must not send the user to unrelated content.
 
 **Agent-selected defaults:**
 
@@ -212,6 +213,6 @@ Run appropriate type/lint/format checks, focused behavior/storage tests, and act
 
 ## Deferred work and remaining checks
 
-Outside version one: other formats, conversion, notes/highlights, OCR, Calibre metadata migration, Vim modes, split/facing pages, continuous scrolling, persistent bookmarks/history, analytics, protected files, cross-library full-text search, cloud/accounts/sync, online metadata, automatic backup/update, multi-library UI, public packaging, and portability. No later milestone is promised.
+Outside version one: other formats, conversion, notes/highlights, OCR, Calibre metadata migration, Vim modes, split/facing pages, continuous scrolling, persistent bookmarks/history, analytics, protected files, cross-library full-text search, cloud/accounts/sync, online metadata, automatic backup/update, multi-library UI, general-purpose public packaging, and portability. A versioned GitHub prerelease archive of the existing personal x86-64 Arch build is authorized (2026-11-06); it does not extend platform support or add AUR/AppImage packaging. No later milestone is promised.
 
 The agreed personal baseline is complete; [implementation-plan.md](implementation-plan.md) records its verified gates and remaining corpus/display/recovery limits. Preserve those gates during future changes. Additional implementation starts from a new user request; deferred features remain outside scope. Document evidence before revising a disproven technical assumption; do not silently reduce functionality or reopen unrelated decisions.

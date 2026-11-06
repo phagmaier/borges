@@ -266,4 +266,12 @@ export const catalogMigrations: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 4,
+    description: "Per-book dark reading mode",
+    up(database) {
+      database.exec(`ALTER TABLE reader_settings ADD COLUMN theme TEXT
+        CHECK (theme IN ('original', 'dark'));`);
+    },
+  },
 ];

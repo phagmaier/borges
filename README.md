@@ -2,9 +2,31 @@
 
 A personal, fully offline PDF/EPUB library and single-page reader for Arch Linux. Import copies your originals, organize books in overlapping nested sections, search metadata, track status/Archive, and read in independent windows with saved positions. Replacement and Trash retain old bytes and locations until you purge.
 
-The agreed personal baseline is complete: all six milestones and the fresh-seeded 500-book release measurements pass. See the handoff and development evidence for exact checks and limits. The target is Arch/Hyprland/Wayland at scale 1. Reopening requests activation; this compositor policy may answer with urgency, requiring one click to focus. The accepted stack is TypeScript, React/CSS, Electron, SQLite, PDF.js, and pinned foliate-js.
+All six personal-baseline milestones are complete. The handoff and development evidence record the checks, 500-book measurements and remaining limits. The target is Arch/Hyprland/Wayland at scale 1. Reopening requests activation; this compositor policy may answer with urgency, requiring one click to focus. The accepted stack is TypeScript, React/CSS, Electron, SQLite, PDF.js, and pinned foliate-js.
 
-## Build and use
+## Download and install
+
+For x86-64 Arch Linux, download `borges-0.1.0-linux-x86_64.tar.gz` and
+`SHA256SUMS` from the [v0.1.0 release](https://github.com/phagmaier/borges/releases/tag/v0.1.0).
+Run these commands in the folder containing both downloads:
+
+```sh
+sha256sum -c SHA256SUMS
+mkdir -p ~/.local/opt
+tar -xzf borges-0.1.0-linux-x86_64.tar.gz -C ~/.local/opt
+~/.local/opt/borges/launch --install-desktop
+~/.local/opt/borges/launch
+```
+
+You can then open Borges from your application menu. The archive includes the
+runtime; no Node, pnpm or source checkout is needed on the laptop. Native Arch
+runtime libraries and a working Chromium sandbox are required; see the
+[user guide](docs/user-guide.md#requirements-and-limits). This is a personal-target
+prerelease, verified on the development Arch/Hyprland desktop; the laptop still
+needs its first local check. Updates are manual: quit all Borges windows before
+replacing the application folder. Your library is stored separately.
+
+## Build from source
 
 ```sh
 mise trust
@@ -44,4 +66,4 @@ See [development setup](docs/development.md) for installation, exact versions, s
 - [Agent instructions](AGENTS.md): how an implementation agent should work in this repository.
 - [Stack decision](docs/adr/0001-desktop-stack.md) and [source-backed research](docs/stack-research.md): rationale and trade-offs.
 
-Development and the diagnostic artifact retain created fixture readers; the personal bundle omits diagnostic fixtures. Run native GUI suites serially. Public/AUR/AppImage distribution, Calibre migration and cloud features remain outside this personal version. No original source books are bundled.
+Development and the diagnostic artifact retain created fixture readers; the personal bundle omits diagnostic fixtures. Run native GUI suites serially. The GitHub archive targets the same personal Arch setup; AUR/AppImage packaging, other platforms, Calibre metadata migration and cloud features remain outside this version. No original source books are bundled.

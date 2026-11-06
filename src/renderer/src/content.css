@@ -1,6 +1,6 @@
 /* Book content frame: the "Reading room" reader chosen in M3-06. The book
  * fills the window; a faint control bar at the bottom brightens on hover or
- * keyboard focus. Book pages keep their authored colours on a paper page. */
+ * keyboard focus. Dark mode is an explicit per-book reading preference. */
 :root {
   color-scheme: light dark;
   --paper: light-dark(#f6f1e7, #1d1a16);
@@ -11,6 +11,11 @@
   --muted: light-dark(#6f6357, #ab9f8e);
   --line: light-dark(#ddd3c2, #3d362d);
   --accent: light-dark(#8a3b1e, #e3a47d);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #1d1a16;
+  --page-ink: #ebe3d5;
 }
 html,
 body {
@@ -69,10 +74,21 @@ body {
   flex-direction: column;
   align-items: center;
   overflow: hidden;
-  /* Book pages keep their authored (light) colours in either system mode. */
+  /* Original mode keeps authored page colours; dark mode is opt-in. */
   color-scheme: light;
   background: var(--page);
   color: var(--page-ink);
+}
+:root[data-theme="dark"] #surface {
+  color-scheme: dark;
+}
+/* A PDF or fixed-layout EPUB is a composed page. Tint the presentation only;
+ * its text layer, selection, geometry and original stored bytes stay intact.
+ * Illustrations on these pages are also tinted. Reflowable images keep colour. */
+:root[data-theme="dark"]
+  #surface[data-fixed="true"]
+  > :is(.pdf-page, foliate-view) {
+  filter: invert(0.9) hue-rotate(180deg) sepia(0.15);
 }
 foliate-view {
   display: block;
@@ -194,6 +210,10 @@ button {
   cursor: pointer;
 }
 button:hover {
+  background: var(--line);
+}
+#dark-mode[aria-pressed="true"] {
+  color: var(--accent);
   background: var(--line);
 }
 input,

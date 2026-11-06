@@ -24,11 +24,18 @@ test("the relocated personal launcher keeps the real sandbox, desktop activation
     ELECTRON_RUN_AS_NODE: "1",
     NODE_OPTIONS: "--throw-deprecation",
   };
-  await cp(resolve("dist/borges"), bundle, { recursive: true });
+  await cp(
+    resolve(process.env.BORGES_DELIVERY_ARTIFACT || "dist/borges"),
+    bundle,
+    { recursive: true },
+  );
   expect(
     JSON.parse(await readFile(join(bundle, "BUILD-INFO.json"), "utf8")),
   ).toMatchObject({
     application: "Borges",
+    version: JSON.parse(await readFile(resolve("package.json"), "utf8"))
+      .version,
+    sourceCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
     electron: "45.2.1",
     pdfjs: "6.5.438",
     foliate: "78914aef4466eb960965702401634c2cb348e9b1",
@@ -76,6 +83,10 @@ test("the relocated personal launcher keeps the real sandbox, desktop activation
     );
     const context = browser.contexts()[0];
     if (!context) throw new Error("Missing application context");
+    const browserSession = await browser.newBrowserCDPSession();
+    // Electron's browser-only CDP attachment needs discovery to report new
+    // BrowserWindows. Keep explicit wait deadlines so failures reach cleanup.
+    await browserSession.send("Target.setDiscoverTargets", { discover: true });
     const library = context.pages()[0];
     if (!library) throw new Error("Missing library window");
     await expect(
@@ -108,24 +119,36 @@ test("the relocated personal launcher keeps the real sandbox, desktop activation
       ),
     ).toBe("denied");
     const open = async (title: string) => {
-      const pending = context.waitForEvent("page");
-      await library
-        .getByRole("list", { name: "Books" })
-        .getByRole("button", { name: title, exact: true })
-        .click();
-      const reader = await pending;
+      const [reader] = await Promise.all([
+        context.waitForEvent("page", { timeout: 10_000 }),
+        library
+          .getByRole("list", { name: "Books" })
+          .getByRole("button", { name: title, exact: true })
+          .press("Enter"),
+      ]);
       const ui = reader.frameLocator('iframe[title="Book content"]');
       await expect(ui.getByRole("status")).toHaveText("Ready");
       return { reader, ui };
     };
     const pdf = await open("Known PDF");
     const epub = await open("Reflowable EPUB");
+    await pdf.ui
+      .getByRole("button", { name: "Dark mode", exact: true })
+      .click();
+    await expect(
+      pdf.ui.getByRole("button", { name: "Dark mode", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(pdf.reader.locator(".reader-window")).toHaveCSS(
+      "color-scheme",
+      "dark",
+    );
     await pdf.ui.getByRole("button", { name: "Next", exact: true }).click();
     await expect(pdf.ui.getByTestId("page-text")).toContainText("CEDAR SECOND");
     await epub.ui.getByRole("spinbutton", { name: "Font size" }).fill("26");
     await epub.ui.getByRole("spinbutton", { name: "Font size" }).press("Tab");
-    const session = await browser.newBrowserCDPSession();
-    const { processInfo } = await session.send("SystemInfo.getProcessInfo");
+    const { processInfo } = await browserSession.send(
+      "SystemInfo.getProcessInfo",
+    );
     const renderers = processInfo.filter(
       (process) => process.type === "renderer",
     );
@@ -149,10 +172,12 @@ test("the relocated personal launcher keeps the real sandbox, desktop activation
     );
     const desktop = join(env.XDG_DATA_HOME, "applications/borges.desktop");
     await execute("desktop-file-validate", [desktop]);
-    const reopened = context.waitForEvent("page");
-    await execute("gio", ["launch", desktop], { env });
+    const [reopened] = await Promise.all([
+      context.waitForEvent("page", { timeout: 10_000 }),
+      execute("gio", ["launch", desktop], { env }),
+    ]);
     await expect(
-      (await reopened).getByRole("heading", { name: "All Books", exact: true }),
+      reopened.getByRole("heading", { name: "All Books", exact: true }),
     ).toBeVisible();
     expect(context.pages()).toHaveLength(3);
     await pdf.reader
@@ -176,6 +201,18 @@ test("the relocated personal launcher keeps the real sandbox, desktop activation
         String(books.find((b) => b.title === "Reflowable EPUB")?.id),
       ).fontSize,
     ).toBe(26);
+    const savedTheme = new DatabaseSync(join(libraryRoot, "catalog.sqlite"), {
+      readOnly: true,
+    });
+    try {
+      expect(
+        savedTheme
+          .prepare("SELECT theme FROM reader_settings WHERE book_id = ?")
+          .get(String(books.find((b) => b.title === "Known PDF")?.id))?.theme,
+      ).toBe("dark");
+    } finally {
+      savedTheme.close();
+    }
     expect(await readdir(join(profile, "config"))).toContain("borges");
     await expect(
       readdir(

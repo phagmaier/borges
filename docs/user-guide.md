@@ -4,6 +4,26 @@ Borges is a personal offline PDF/EPUB library and single-page reader for Arch Li
 It copies imported files; your originals stay where they are. There are no accounts,
 online metadata, telemetry, runtime downloads or automatic updates.
 
+## Install the release archive
+
+On x86-64 Arch Linux, download `borges-0.1.0-linux-x86_64.tar.gz` and
+`SHA256SUMS` from https://github.com/phagmaier/borges/releases/tag/v0.1.0.
+In the download folder:
+
+```sh
+sha256sum -c SHA256SUMS
+mkdir -p ~/.local/opt
+tar -xzf borges-0.1.0-linux-x86_64.tar.gz -C ~/.local/opt
+~/.local/opt/borges/launch --install-desktop
+~/.local/opt/borges/launch
+```
+
+The complete application is now in `~/.local/opt/borges`; it can also be opened
+from the application menu. The library stays in its separate data folder described
+below. Quit all Borges windows before replacing an older application folder.
+No automatic update is performed. This prerelease targets the personal Arch setup;
+first launch on another machine still needs a local rendering/save check.
+
 ## Build and start
 
 In the source checkout, run `mise trust`, `mise install node pnpm`, then
@@ -72,7 +92,7 @@ Single click a book to select it; double click or press Enter to read. This also
 applies to Continue reading. Space, Ctrl-click and the checkboxes toggle selection
 for multiple-book actions. Choose Edit details after selecting one book.
 
-Each book has its own reader window and saved position/sizing. Reopening a book
+Each book has its own reader window and saved position, sizing and dark mode. Reopening a book
 reuses its window and requests activation. Hyprland may show urgency instead of
 focusing it; one click brings it forward. Closing the library leaves readers open;
 use Open library in a reader. Closing the last window exits. Quit application saves
@@ -91,6 +111,12 @@ and closes all windows. Startup opens the library without reopening old readers.
 | Contents | PDF outline or EPUB chapters, when present |
 | Zoom / Fit page | PDF or fixed-layout EPUB; pan within the current page |
 | Font size | Reflowable EPUB; preserve the current passage |
+| Dark mode | Toggle dark pages and reader controls; remembered for this book |
+
+For night reading, choose **Dark mode** in the bottom bar. Reflowable EPUBs use
+soft text on a warm charcoal page and keep image colours. PDFs and fixed-layout
+EPUBs tint the whole page, including illustrations. Toggle it off to see original
+page colours. The choice is saved with your position and survives reopening.
 
 Search works with the bottom bar hidden; `:` reveals the Jump field.
 Inputs, buttons, lists and dialogs keep ordinary keyboard behavior; Ctrl sizing and
@@ -164,4 +190,5 @@ EPUB 2/NCX/RTL, PDF geometry, images, links and book-length search. Arbitrary pu
 compatibility, other displays/scales, physical power loss and main/GPU recovery
 are not established by those tests. See the source checkout's development evidence
 for exact acceptance and 500-book measurements. This is a personal local build;
-public/AUR/AppImage distribution is outside scope.
+AUR/AppImage packaging and other-platform distribution are outside scope. The GitHub
+release archive packages this same personal Arch build.

@@ -1,3 +1,4 @@
+import type { StoredSizing } from "../../library/progress";
 import { EpubSession } from "../../readers/epub";
 import { PdfSession } from "../../readers/pdf";
 import {
@@ -34,6 +35,7 @@ const searchStatus = element<HTMLElement>("#search-status");
 const jump = element<HTMLFormElement>("#jump-form");
 const font = element<HTMLInputElement>("#font");
 const zoom = element<HTMLInputElement>("#zoom");
+const darkMode = element<HTMLButtonElement>("#dark-mode");
 const snapshot = element<HTMLTextAreaElement>("#snapshot");
 let session: ReaderSession;
 let revision = "";
@@ -320,7 +322,7 @@ async function size() {
     value > 8
   )
     throw new ReaderInputError("Font size must be 8–72; zoom must be 0.25–8.");
-  await session.setSizing({ fontSize, zoom: value });
+  await session.setSizing({ ...session.sizing, fontSize, zoom: value });
   reportPosition();
 }
 function resizeBy(direction: number) {
@@ -343,6 +345,21 @@ element("#fit").onclick = () => {
   zoom.value = "1";
   void run(size);
 };
+function syncTheme() {
+  const dark = session.sizing.theme === "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "original";
+  darkMode.setAttribute("aria-pressed", String(dark));
+  tellParent({ type: "borges:theme", theme: dark ? "dark" : "original" });
+}
+darkMode.onclick = () => {
+  void run(async () => {
+    await session.setSizing({
+      ...session.sizing,
+      theme: session.sizing.theme === "dark" ? "original" : "dark",
+    });
+    syncTheme();
+  });
+};
 element("#capture").onclick = () => {
   void run(async () => {
     snapshot.value = JSON.stringify({
@@ -359,6 +376,7 @@ element("#restore").onclick = () => {
     if (saved.location.format !== session.format)
       throw new Error("Snapshot format mismatch.");
     await session.setSizing(saved.sizing);
+    syncTheme();
     font.value = String(saved.sizing.fontSize);
     zoom.value = String(saved.sizing.zoom);
     const result = await session.restore(saved.location);
@@ -384,7 +402,7 @@ interface OpenMessage {
   format: "pdf" | "epub";
   bytes: ArrayBuffer;
   location: ReaderLocation | null;
-  sizing: { fontSize: number | null; zoom: number | null };
+  sizing: StoredSizing;
 }
 let parentOrigin: string | null = null;
 let reporting = false;
@@ -473,6 +491,8 @@ async function open() {
     .join("");
   const isPdf = book ? book.format === "pdf" : name.endsWith(".pdf");
   session = isPdf ? new PdfSession() : new EpubSession(handleKey, handleWheel);
+  if (book?.sizing.theme) session.sizing.theme = book.sizing.theme;
+  syncTheme();
   session.addEventListener("navigate", (event) => {
     const target = (event as CustomEvent<ReaderLocation>).detail;
     void run(async () => {
@@ -501,6 +521,7 @@ async function open() {
     reportPosition();
   });
   await session.open(new File([bytes], name), surface);
+  surface.dataset.fixed = String(!session.reflowable);
   element("#font-control").hidden = !session.reflowable;
   element("#zoom-control").hidden = session.reflowable;
   element("#fit").hidden = session.reflowable;
@@ -514,6 +535,7 @@ async function open() {
   let restoration: Restoration | "none" = "none";
   if (book) {
     const sizing = {
+      ...session.sizing,
       fontSize: book.sizing.fontSize ?? session.sizing.fontSize,
       zoom: book.sizing.zoom ?? session.sizing.zoom,
     };

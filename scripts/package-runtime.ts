@@ -97,6 +97,9 @@ if (personal) {
       {
         application: "Borges",
         version: manifest.version,
+        sourceCommit: execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
+          encoding: "utf8",
+        }).trim(),
         electron: manifest.devDependencies.electron,
         pdfjs: manifest.dependencies["pdfjs-dist"],
         foliate: execFileSync(

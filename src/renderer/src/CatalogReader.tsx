@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { ReaderTheme } from "../../readers/session";
 import type { OpenedBook } from "../../shared/runtime";
 import { engineUrl } from "../../shared/windows";
 import { ReplaceFileDialog } from "./library/ReplaceFileDialog";
@@ -30,10 +31,12 @@ export function CatalogReader({
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [book, setBook] = useState<OpenedBook | null>(null);
+  const [theme, setTheme] = useState<ReaderTheme>("original");
   const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [replace, setReplace] = useState(false);
   const ready = useRef(false);
+  const [engineReady, setEngineReady] = useState(false);
   const [crashed, setCrashed] = useState(false);
   const failed = useRef(false);
   const draining = useRef<string | null>(null);
@@ -46,6 +49,7 @@ export function CatalogReader({
   useEffect(() => {
     let cancelled = false;
     ready.current = false;
+    setEngineReady(false);
     failed.current = false;
     setCrashed(false);
     setBook(null);
@@ -57,7 +61,10 @@ export function CatalogReader({
     window.borges.reader
       .openBook()
       .then((opened) => {
-        if (!cancelled) setBook(opened);
+        if (!cancelled) {
+          setTheme(opened.sizing.theme ?? "original");
+          setBook(opened);
+        }
       })
       .catch((reason: unknown) => {
         if (!cancelled) setAlert(String(reason));
@@ -71,6 +78,7 @@ export function CatalogReader({
     const stopCrash = window.borges.reader.onEngineGone(() => {
       failed.current = true;
       ready.current = false;
+      setEngineReady(false);
       setCrashed(true);
       setAlert(
         "The book process stopped. Retry reader reopens the last saved position. Commands still in flight may be lost.",
@@ -140,8 +148,14 @@ export function CatalogReader({
           new URL(frame.current?.src ?? "about:blank").origin,
           [bytes],
         );
+      } else if (
+        data.type === "borges:theme" &&
+        (data.theme === "dark" || data.theme === "original")
+      ) {
+        setTheme(data.theme);
       } else if (data.type === "borges:opened") {
         ready.current = true;
+        setEngineReady(true);
         setNotice(restorationNotices[String(data.restoration)] ?? null);
         window.borges.reader
           .bookOpened(book.bookId, book.generation)
@@ -216,7 +230,10 @@ export function CatalogReader({
   }, []);
 
   return (
-    <div className="reader-window">
+    <div
+      className="reader-window"
+      style={{ colorScheme: theme === "dark" ? "dark" : undefined }}
+    >
       <header className="reader-title">
         <h1>{book?.title ?? title}</h1>
         <p
@@ -285,6 +302,8 @@ export function CatalogReader({
               source: "catalog",
             })}
             sandbox="allow-scripts allow-same-origin"
+            // Keep animation frames running while the engine lays out the book.
+            style={{ opacity: engineReady ? 1 : 0 }}
           />
         ) : null}
       </div>

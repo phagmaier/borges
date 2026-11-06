@@ -1,6 +1,6 @@
 # Bundled components
 
-Borges is a private personal build. No Calibre code or downloaded books are included.
+Borges is a personal build for x86-64 Arch Linux. No Calibre code or downloaded books are included.
 Exact installed dependency versions/integrities are recorded by the source checkout's
 pnpm-lock.yaml; this bundle records its hash and reader/runtime pins in BUILD-INFO.json.
 

@@ -43,7 +43,7 @@ test("built desktop shell loads with sandboxed UI and its locked development cat
       sandboxed: true,
       contextIsolated: true,
       catalog: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         created: true,
         // Development builds keep the library inside their own profile.
         root: join(profile, "library"),

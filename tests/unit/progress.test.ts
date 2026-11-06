@@ -82,6 +82,26 @@ const storedPage = (revision = "pdf-1") =>
     .get(revision)?.pdf_page ?? null;
 
 describe("reader session grants and restoration", () => {
+  it("persists dark mode per book and can return to original colours", () => {
+    const first = beginReaderSession(database, "pdf");
+    saveProgress(database, {
+      ...write(first, 1, page(7)),
+      sizing: { ...sizing, theme: "dark" },
+    });
+    reopen();
+    const next = beginReaderSession(database, "pdf");
+    expect(next).toMatchObject({
+      location: page(7),
+      sizing: { ...sizing, theme: "dark" },
+    });
+    expect(beginReaderSession(database, "epub").sizing.theme).toBeUndefined();
+    saveProgress(database, {
+      ...write(next, 1, page(7)),
+      sizing: { ...sizing, theme: "original" },
+    });
+    reopen();
+    expect(beginReaderSession(database, "pdf").sizing.theme).toBe("original");
+  });
   it("restores the last committed position and sizing in a later process", () => {
     const first = beginReaderSession(database, "pdf");
     expect(first).toEqual({
@@ -266,6 +286,10 @@ describe("untrusted progress messages", () => {
       () => ({ ...valid(), sizing: { fontSize: 100, zoom: 1 } }),
     ],
     [
+      "an unknown theme",
+      () => ({ ...valid(), sizing: { ...sizing, theme: "blue" } }),
+    ],
+    [
       "an EPUB locator for a PDF revision",
       () => ({
         ...valid(),
@@ -297,22 +321,27 @@ describe("untrusted progress messages", () => {
 describe("storage failures and termination", () => {
   it("reports a failed write and keeps both position and sizing unchanged", () => {
     const grant = beginReaderSession(database, "pdf");
-    saveProgress(database, write(grant, 1, page(8)));
+    saveProgress(database, {
+      ...write(grant, 1, page(8)),
+      sizing: { ...sizing, theme: "dark" },
+    });
     // Fail the second statement so a non-atomic save would leave a new page.
     database.exec(`CREATE TRIGGER fail_settings BEFORE INSERT ON reader_settings
       BEGIN SELECT RAISE(FAIL, 'injected disk failure'); END;`);
     const error = rejection(() =>
       saveProgress(database, {
         ...write(grant, 2, page(9)),
-        sizing: { fontSize: 30, zoom: 3 },
+        sizing: { fontSize: 30, zoom: 3, theme: "original" },
       }),
     );
     expect(error.code).toBe("storage-failed");
     expect(error.message).toContain("injected disk failure");
     expect(storedPage()).toBe(8);
     expect(
-      database.prepare("SELECT font_size, zoom FROM reader_settings").get(),
-    ).toEqual({ font_size: 18, zoom: 1.25 });
+      database
+        .prepare("SELECT font_size, zoom, theme FROM reader_settings")
+        .get(),
+    ).toEqual({ font_size: 18, zoom: 1.25, theme: "dark" });
     database.exec("DROP TRIGGER fail_settings");
     // The failed sequence was not consumed; the reader can retry it.
     saveProgress(database, write(grant, 2, page(9)));
@@ -343,7 +372,7 @@ describe("schema 2 upgrade", () => {
       "INSERT INTO positions (revision_id, format, pdf_page, pan_x, pan_y, sequence, updated_at) VALUES ('old-1', 'pdf', 77, 0, 0, 40, 1)",
     );
     reopen();
-    expect(library?.upgrade).toMatchObject({ from: 1, to: 3 });
+    expect(library?.upgrade).toMatchObject({ from: 1, to: 4 });
     const grant = beginReaderSession(database, "old");
     expect(grant).toMatchObject({
       generation: 1,
@@ -353,4 +382,23 @@ describe("schema 2 upgrade", () => {
     saveProgress(database, write(grant, 1, page(78)));
     expect(storedPage("old-1")).toBe(78);
   });
+});
+
+it("upgrades populated schema 3 without changing position or sizing", () => {
+  library?.close();
+  rmSync(root, { recursive: true });
+  library = openLibrary({ root, migrations: catalogMigrations.slice(0, 3) });
+  addBook(library.database, { book: "old", revision: "old-1", title: "Old" });
+  library.database.exec(`
+    INSERT INTO positions (revision_id, format, pdf_page, pan_x, pan_y, sequence, updated_at)
+      VALUES ('old-1', 'pdf', 12, 0, 0, 1, 1);
+    INSERT INTO reader_settings (book_id, font_size, zoom, updated_at) VALUES ('old', 24, 2, 1);
+  `);
+  reopen();
+  expect(library?.upgrade).toMatchObject({ from: 3, to: 4 });
+  expect(beginReaderSession(database, "old")).toMatchObject({
+    location: { format: "pdf", page: 12 },
+    sizing: { fontSize: 24, zoom: 2 },
+  });
+  expect(beginReaderSession(database, "old").sizing.theme).toBeUndefined();
 });

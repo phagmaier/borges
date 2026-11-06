@@ -198,7 +198,7 @@ test("relocated runtime keeps one catalog across restarts and a moved root", asy
       sandboxed: true,
       contextIsolated: true,
       catalog: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         root: libraryRoot,
         created: true,
         upgradedFrom: null,
@@ -329,16 +329,16 @@ for (const scenario of [
     name: "newer schema",
     prepare: (database: DatabaseSync) =>
       database.exec(
-        "PRAGMA user_version = 4; CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('keep this');",
+        "PRAGMA user_version = 5; CREATE TABLE future_data (value TEXT); INSERT INTO future_data VALUES ('keep this');",
       ),
-    error: "uses schema 4, but this Borges build supports schema 3 at most",
+    error: "uses schema 5, but this Borges build supports schema 4 at most",
   },
   {
     name: "damaged supported schema",
     prepare: (database: DatabaseSync) =>
       database.exec("DROP TABLE trash_entries"),
     catalog: true,
-    error: "does not match schema 3",
+    error: "does not match schema 4",
   },
   {
     name: "foreign database",
@@ -360,7 +360,7 @@ for (const scenario of [
     from: 2,
     prepare: (_database: DatabaseSync) => {},
     readOnly: true,
-    error: "Upgrading the catalog from schema 2 to 3 failed",
+    error: "Upgrading the catalog from schema 2 to 4 failed",
   },
 ]) {
   test(`packaged startup refuses ${scenario.name} and retains the catalog`, async () => {
@@ -372,7 +372,7 @@ for (const scenario of [
     if (scenario.catalog)
       openLibrary({
         root: libraryRoot,
-        migrations: catalogMigrations.slice(0, scenario.from ?? 3),
+        migrations: catalogMigrations.slice(0, scenario.from ?? 4),
       }).close();
     const path = join(libraryRoot, "catalog.sqlite");
     const database = new DatabaseSync(path);
@@ -394,7 +394,7 @@ for (const scenario of [
   });
 }
 
-for (const from of [1, 2]) {
+for (const from of [1, 2, 3]) {
   test(`packaged startup upgrades a schema-${from} catalog after a verified snapshot`, async () => {
     const libraryRoot = libraryFor(profile);
     const old = openLibrary({
@@ -407,7 +407,7 @@ for (const from of [1, 2]) {
     try {
       expect((await catalogOf(application)).info.catalog).toMatchObject({
         libraryId,
-        schemaVersion: 3,
+        schemaVersion: 4,
         created: false,
         upgradedFrom: from,
       });
@@ -417,7 +417,7 @@ for (const from of [1, 2]) {
     const snapshots = await readdir(join(libraryRoot, "recovery"));
     expect(snapshots).toEqual([
       expect.stringMatching(
-        new RegExp(`^catalog-schema-${from}-before-3-.*\\.sqlite$`),
+        new RegExp(`^catalog-schema-${from}-before-4-.*\\.sqlite$`),
       ),
     ]);
     const snapshot = new DatabaseSync(
@@ -478,6 +478,10 @@ test("packaged readers save/resume, replace across formats and retain the old po
   try {
     const { ui } = await read(application);
     await expect(ui.getByTestId("page-text")).toContainText("ORCHID FIRST");
+    await ui.getByRole("button", { name: "Dark mode", exact: true }).click();
+    await expect(
+      ui.getByRole("button", { name: "Dark mode", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     const surface = ui.getByRole("region", { name: "Reading surface" });
     await surface.focus();
     await surface.press("ArrowRight");
@@ -503,6 +507,9 @@ test("packaged readers save/resume, replace across formats and retain the old po
   try {
     const { ui } = await read(application);
     await expect(ui.getByTestId("page-text")).toContainText("HARBOR THIRD");
+    await expect(
+      ui.getByRole("button", { name: "Dark mode", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await ui.getByRole("button", { name: "Previous", exact: true }).click();
     await expect(ui.getByTestId("page-text")).toContainText("CEDAR SECOND");
     const library = await application.firstWindow();
@@ -526,6 +533,9 @@ test("packaged readers save/resume, replace across formats and retain the old po
     await expect(ui.getByTestId("visible-text")).toContainText(
       "ORCHID EPUB FIRST",
     );
+    await expect(
+      ui.getByRole("button", { name: "Dark mode", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     const database = new DatabaseSync(
       join(libraryFor(profile), "catalog.sqlite"),
       { readOnly: true },
@@ -550,7 +560,7 @@ test("packaged readers save/resume, replace across formats and retain the old po
     const opened = application.waitForEvent("window");
     await library
       .getByRole("button", { name: "Garden Stories", exact: true })
-      .click();
+      .dblclick();
     const reader = await opened;
     await expect(
       reader
